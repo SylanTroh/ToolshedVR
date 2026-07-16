@@ -15,7 +15,7 @@ namespace Basis.Scripts.Networking
         public const string Id = "savedServers";
 
         public const string DefaultServerId = "__default__";
-        public const string DefaultServerAddress = "server1.basisvr.org";
+        public const string DefaultServerAddress = "play.basis.toolshedvr.com";
         public const ushort DefaultServerPort = 4296;
         public const string DefaultServerPassword = "default_password";
 
