@@ -12,8 +12,8 @@ PlayerSettings:
   targetDevice: 2
   useOnDemandResources: 0
   accelerometerFrequency: 60
-  companyName: Basis Unity
-  productName: Basis Unity
+  companyName: Toolshed VR
+  productName: Toolshed VR
   defaultCursor: {fileID: 2800000, guid: b6a94fc18d631d9ffa4a97234f1fefec, type: 3}
   cursorHotspot: {x: 9, y: 5}
   m_SplashScreenBackgroundColor: {r: 0.12156863, g: 0.12156863, b: 0.1254902, a: 1}
@@ -171,7 +171,7 @@ PlayerSettings:
   androidMaxAspectRatio: 2.4
   androidMinAspectRatio: 1
   applicationIdentifier:
-    Android: com.BasisUnity.BasisUnity
+    Android: com.toolshedvr.client
     Standalone: com.Basis-Unity.Basis-Unity
     iPhone: com.Basis-Unity.Basis-Unity
   buildNumber:
@@ -276,8 +276,8 @@ PlayerSettings:
   AndroidTargetArchitectures: 2
   AndroidSplashScreenScale: 0
   androidSplashScreen: {fileID: 0}
-  AndroidKeystoreName: C:/Users/doola/OneDrive/Documents/Github/Basis Keys/BasisQuest.keystore
-  AndroidKeyaliasName: basis
+  AndroidKeystoreName:
+  AndroidKeyaliasName:
   AndroidEnableArmv9SecurityFeatures: 0
   AndroidEnableArm64MTE: 0
   AndroidBuildApkPerCpuArchitecture: 0
@@ -289,7 +289,7 @@ PlayerSettings:
   AndroidEnableTango: 0
   androidEnableBanner: 1
   androidUseLowAccuracyLocation: 0
-  androidUseCustomKeystore: 1
+  androidUseCustomKeystore: 0
   m_AndroidBanners:
   - width: 320
     height: 180
