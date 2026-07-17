@@ -607,9 +607,9 @@
     { "key": "trackerLinking.tuning.calibrationTolerance", "value": "Допуск калибровки" },
     { "key": "trackerLinking.tuning.calibrationTolerance.description", "value": "Умножает размер зоны приёма для каждой части тела, используемой при сопоставлении трекеров с ролями во время полной калибровки тела. Больше = терпимее к необычным пропорциям тела, высоко закреплённым трекерам, широкой стойке или неидеальной Т-позе ценой случайных ошибок назначения. По умолчанию: 1." },
 
-    { "key": "menu.exit.dialog.title", "value": "Basis VR" },
-    { "key": "menu.exit.dialog.body", "value": "Вы уверены, что хотите закрыть Basis?" },
-    { "key": "menu.exit.dialog.confirm", "value": "Выйти из Basis" },
+    { "key": "menu.exit.dialog.title", "value": "ToolshedVR" },
+    { "key": "menu.exit.dialog.body", "value": "Вы уверены, что хотите закрыть ToolshedVR?" },
+    { "key": "menu.exit.dialog.confirm", "value": "Выйти из ToolshedVR" },
     { "key": "menu.exit.dialog.reboot", "value": "Перезапустить и переподключиться" },
     { "key": "menu.exit.dialog.restart", "value": "Перезапустить" },
 
@@ -643,7 +643,7 @@
     { "key": "menu.servers.error.noNetworkLayer", "value": "Сетевой слой не создан!" },
     { "key": "menu.servers.error.timeout", "value": "Время отключения/перезагрузки истекло." },
     { "key": "menu.servers.error.connectFailed", "value": "Подключение не удалось." },
-    { "key": "menu.servers.list.default", "value": "Default Basis Server" },
+    { "key": "menu.servers.list.default", "value": "Default ToolshedVR Server" },
     { "key": "menu.players.search.byNameOrUuid", "value": "Фильтр по отображаемому имени или UUID." },
 
     { "key": "menu.players.search.byName", "value": "Фильтр по отображаемому имени." },

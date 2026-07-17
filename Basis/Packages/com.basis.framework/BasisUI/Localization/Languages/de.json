@@ -607,9 +607,9 @@
     { "key": "trackerLinking.tuning.calibrationTolerance", "value": "Kalibrierungstoleranz" },
     { "key": "trackerLinking.tuning.calibrationTolerance.description", "value": "Multipliziert die Größe jeder Körperteil-Akzeptanzzone, die beim Zuordnen von Trackern zu Rollen während der Ganzkörperkalibrierung verwendet wird. Höher = toleranter gegenüber ungewöhnlichen Körperproportionen, hoch montierten Trackern, einer breiten Standhaltung oder einer unvollkommenen T-Pose, allerdings um den Preis gelegentlicher Fehlzuweisungen. Standard: 1." },
 
-    { "key": "menu.exit.dialog.title", "value": "Basis VR" },
-    { "key": "menu.exit.dialog.body", "value": "Möchtest du Basis wirklich schließen?" },
-    { "key": "menu.exit.dialog.confirm", "value": "Basis beenden" },
+    { "key": "menu.exit.dialog.title", "value": "ToolshedVR" },
+    { "key": "menu.exit.dialog.body", "value": "Möchtest du ToolshedVR wirklich schließen?" },
+    { "key": "menu.exit.dialog.confirm", "value": "ToolshedVR beenden" },
     { "key": "menu.exit.dialog.reboot", "value": "Neu starten und neu verbinden" },
     { "key": "menu.exit.dialog.restart", "value": "Neu starten" },
 
@@ -643,7 +643,7 @@
     { "key": "menu.servers.error.noNetworkLayer", "value": "Netzwerk-Layer wurde nicht erstellt!" },
     { "key": "menu.servers.error.timeout", "value": "Trennen/Neustart hat das Zeitlimit überschritten." },
     { "key": "menu.servers.error.connectFailed", "value": "Verbindung fehlgeschlagen." },
-    { "key": "menu.servers.list.default", "value": "Standard-Basis-Server" },
+    { "key": "menu.servers.list.default", "value": "Standard-ToolshedVR-Server" },
     { "key": "menu.players.search.byNameOrUuid", "value": "Nach Anzeigename oder UUID filtern." },
 
     { "key": "menu.players.search.byName", "value": "Nach Anzeigename filtern." },

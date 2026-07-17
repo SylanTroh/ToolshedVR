@@ -607,9 +607,9 @@
     { "key": "trackerLinking.tuning.calibrationTolerance", "value": "Tolerancia de calibración" },
     { "key": "trackerLinking.tuning.calibrationTolerance.description", "value": "Multiplica el tamaño de cada zona de aceptación de parte del cuerpo que se usa al asignar trackers a roles durante la calibración de cuerpo completo. Más alto = más tolerante con proporciones corporales inusuales, trackers montados en alto, una postura amplia o una pose en T imperfecta, a costa de alguna asignación errónea ocasional. Predeterminado: 1." },
 
-    { "key": "menu.exit.dialog.title", "value": "Basis VR" },
-    { "key": "menu.exit.dialog.body", "value": "¿Estás seguro de que quieres cerrar Basis?" },
-    { "key": "menu.exit.dialog.confirm", "value": "Salir de Basis" },
+    { "key": "menu.exit.dialog.title", "value": "ToolshedVR" },
+    { "key": "menu.exit.dialog.body", "value": "¿Estás seguro de que quieres cerrar ToolshedVR?" },
+    { "key": "menu.exit.dialog.confirm", "value": "Salir de ToolshedVR" },
     { "key": "menu.exit.dialog.reboot", "value": "Reiniciar y reconectar" },
     { "key": "menu.exit.dialog.restart", "value": "Reiniciar" },
 
@@ -643,7 +643,7 @@
     { "key": "menu.servers.error.noNetworkLayer", "value": "¡No se creó la capa de red!" },
     { "key": "menu.servers.error.timeout", "value": "Se agotó el tiempo al desconectar/reiniciar." },
     { "key": "menu.servers.error.connectFailed", "value": "Falló la conexión." },
-    { "key": "menu.servers.list.default", "value": "Default Basis Server" },
+    { "key": "menu.servers.list.default", "value": "Default ToolshedVR Server" },
     { "key": "menu.players.search.byNameOrUuid", "value": "Filtrar por nombre visible o UUID." },
 
     { "key": "menu.players.search.byName", "value": "Filtrar por nombre para mostrar." },

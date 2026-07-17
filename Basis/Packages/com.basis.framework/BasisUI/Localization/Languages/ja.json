@@ -607,9 +607,9 @@
     { "key": "trackerLinking.tuning.calibrationTolerance", "value": "キャリブレーション許容範囲" },
     { "key": "trackerLinking.tuning.calibrationTolerance.description", "value": "フルボディキャリブレーション中にトラッカーを役割に割り当てる際に使用される、各身体部位の受け入れ範囲のサイズを乗算します。高くすると、特殊な体型、高い位置に取り付けたトラッカー、広いスタンス、不完全なTポーズに対して寛容になりますが、まれに誤割り当てが発生します。デフォルト: 1" },
 
-    { "key": "menu.exit.dialog.title", "value": "Basis VR" },
-    { "key": "menu.exit.dialog.body", "value": "Basisを終了してもよろしいですか？" },
-    { "key": "menu.exit.dialog.confirm", "value": "Basisを終了" },
+    { "key": "menu.exit.dialog.title", "value": "ToolshedVR" },
+    { "key": "menu.exit.dialog.body", "value": "ToolshedVRを終了してもよろしいですか？" },
+    { "key": "menu.exit.dialog.confirm", "value": "ToolshedVRを終了" },
     { "key": "menu.exit.dialog.reboot", "value": "再起動して再接続" },
     { "key": "menu.exit.dialog.restart", "value": "再起動" },
 
@@ -643,7 +643,7 @@
     { "key": "menu.servers.error.noNetworkLayer", "value": "ネットワーク層が作成されていません！" },
     { "key": "menu.servers.error.timeout", "value": "切断/再起動がタイムアウトしました。" },
     { "key": "menu.servers.error.connectFailed", "value": "接続に失敗しました。" },
-    { "key": "menu.servers.list.default", "value": "Default Basis Server" },
+    { "key": "menu.servers.list.default", "value": "Default ToolshedVR Server" },
     { "key": "menu.players.search.byNameOrUuid", "value": "表示名またはUUIDでフィルターします。" },
 
     { "key": "menu.players.search.byName", "value": "表示名で絞り込み。" },

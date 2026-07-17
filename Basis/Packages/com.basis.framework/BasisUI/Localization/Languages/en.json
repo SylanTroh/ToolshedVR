@@ -2104,15 +2104,15 @@
     },
     {
       "key": "menu.exit.dialog.title",
-      "value": "Basis VR"
+      "value": "ToolshedVR"
     },
     {
       "key": "menu.exit.dialog.body",
-      "value": "Are you sure you want to close Basis?"
+      "value": "Are you sure you want to close ToolshedVR?"
     },
     {
       "key": "menu.exit.dialog.confirm",
-      "value": "Exit Basis"
+      "value": "Exit ToolshedVR"
     },
     {
       "key": "menu.exit.dialog.reboot",
@@ -2244,7 +2244,7 @@
     },
     {
       "key": "menu.servers.list.default",
-      "value": "Default Basis Server"
+      "value": "Default ToolshedVR Server"
     },
     {
       "key": "menu.players.search.byNameOrUuid",

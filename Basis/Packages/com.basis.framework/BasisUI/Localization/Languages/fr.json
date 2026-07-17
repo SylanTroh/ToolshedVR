@@ -607,9 +607,9 @@
     { "key": "trackerLinking.tuning.calibrationTolerance", "value": "Tolérance de calibration" },
     { "key": "trackerLinking.tuning.calibrationTolerance.description", "value": "Multiplie la taille de la zone d'acceptation de chaque partie du corps utilisée pour associer les trackers aux rôles pendant la calibration corps complet. Plus élevé = plus tolérant aux proportions corporelles inhabituelles, aux trackers montés haut, à une position jambes écartées ou à une T-pose imparfaite, au prix d'une mauvaise attribution occasionnelle. Par défaut : 1." },
 
-    { "key": "menu.exit.dialog.title", "value": "Basis VR" },
-    { "key": "menu.exit.dialog.body", "value": "Êtes-vous sûr de vouloir fermer Basis ?" },
-    { "key": "menu.exit.dialog.confirm", "value": "Quitter Basis" },
+    { "key": "menu.exit.dialog.title", "value": "ToolshedVR" },
+    { "key": "menu.exit.dialog.body", "value": "Êtes-vous sûr de vouloir fermer ToolshedVR ?" },
+    { "key": "menu.exit.dialog.confirm", "value": "Quitter ToolshedVR" },
     { "key": "menu.exit.dialog.reboot", "value": "Redémarrer et se reconnecter" },
     { "key": "menu.exit.dialog.restart", "value": "Redémarrer" },
 
@@ -643,7 +643,7 @@
     { "key": "menu.servers.error.noNetworkLayer", "value": "La couche réseau n'a pas été créée !" },
     { "key": "menu.servers.error.timeout", "value": "Délai de déconnexion/redémarrage dépassé." },
     { "key": "menu.servers.error.connectFailed", "value": "Échec de la connexion." },
-    { "key": "menu.servers.list.default", "value": "Default Basis Server" },
+    { "key": "menu.servers.list.default", "value": "Default ToolshedVR Server" },
     { "key": "menu.players.search.byNameOrUuid", "value": "Filtrer par nom d'affichage ou UUID." },
 
     { "key": "menu.players.search.byName", "value": "Filtrer par nom affiché." },

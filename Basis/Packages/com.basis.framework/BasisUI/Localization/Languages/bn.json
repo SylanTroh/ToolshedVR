@@ -607,9 +607,9 @@
     { "key": "trackerLinking.tuning.calibrationTolerance", "value": "ক্যালিব্রেশন সহনশীলতা" },
     { "key": "trackerLinking.tuning.calibrationTolerance.description", "value": "ফুল-বডি ক্যালিব্রেশনের সময় ট্র্যাকারকে ভূমিকার সাথে মেলানোর ক্ষেত্রে ব্যবহৃত প্রতিটি শরীর-অংশের অ্যাকসেপ্ট জোনের আকার গুণ করে। বেশি = অস্বাভাবিক শরীরের অনুপাত, উঁচুতে বসানো ট্র্যাকার, প্রশস্ত ভঙ্গি, বা একটি অসম্পূর্ণ T-ভঙ্গির প্রতি বেশি সহনশীল, তবে মাঝে মাঝে ভুল-বরাদ্দের বিনিময়ে। ডিফল্ট: ১।" },
 
-    { "key": "menu.exit.dialog.title", "value": "Basis VR" },
-    { "key": "menu.exit.dialog.body", "value": "আপনি কি নিশ্চিত যে আপনি Basis বন্ধ করতে চান?" },
-    { "key": "menu.exit.dialog.confirm", "value": "Basis থেকে প্রস্থান" },
+    { "key": "menu.exit.dialog.title", "value": "ToolshedVR" },
+    { "key": "menu.exit.dialog.body", "value": "আপনি কি নিশ্চিত যে আপনি ToolshedVR বন্ধ করতে চান?" },
+    { "key": "menu.exit.dialog.confirm", "value": "ToolshedVR থেকে প্রস্থান" },
     { "key": "menu.exit.dialog.reboot", "value": "রিস্টার্ট ও পুনঃসংযোগ" },
     { "key": "menu.exit.dialog.restart", "value": "রিস্টার্ট" },
 
@@ -643,7 +643,7 @@
     { "key": "menu.servers.error.noNetworkLayer", "value": "নেটওয়ার্কিং স্তর তৈরি করা হয়নি!" },
     { "key": "menu.servers.error.timeout", "value": "সংযোগ বিচ্ছিন্ন/পুনরায় চালুর সময় শেষ।" },
     { "key": "menu.servers.error.connectFailed", "value": "সংযোগ ব্যর্থ হয়েছে।" },
-    { "key": "menu.servers.list.default", "value": "Default Basis Server" },
+    { "key": "menu.servers.list.default", "value": "Default ToolshedVR Server" },
     { "key": "menu.players.search.byNameOrUuid", "value": "প্রদর্শন নাম বা UUID দিয়ে ফিল্টার করুন।" },
 
     { "key": "menu.players.search.byName", "value": "প্রদর্শন নাম দ্বারা ফিল্টার করুন।" },

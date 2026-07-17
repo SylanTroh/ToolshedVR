@@ -607,9 +607,9 @@
     { "key": "trackerLinking.tuning.calibrationTolerance", "value": "校準容差" },
     { "key": "trackerLinking.tuning.calibrationTolerance.description", "value": "在全身校準期間將追蹤器配對到角色時，用來放大每個身體部位接受區的大小。數值越高，越能容許不尋常的身體比例、高處安裝的追蹤器、寬站姿或不完美的 T 姿勢，但代價是偶爾會誤指派。預設：1。" },
 
-    { "key": "menu.exit.dialog.title", "value": "Basis VR" },
-    { "key": "menu.exit.dialog.body", "value": "确定要关闭 Basis 吗？" },
-    { "key": "menu.exit.dialog.confirm", "value": "退出 Basis" },
+    { "key": "menu.exit.dialog.title", "value": "ToolshedVR" },
+    { "key": "menu.exit.dialog.body", "value": "确定要关闭 ToolshedVR 吗？" },
+    { "key": "menu.exit.dialog.confirm", "value": "退出 ToolshedVR" },
     { "key": "menu.exit.dialog.reboot", "value": "重新啟動並重新連線" },
     { "key": "menu.exit.dialog.restart", "value": "重新啟動" },
 
@@ -643,7 +643,7 @@
     { "key": "menu.servers.error.noNetworkLayer", "value": "未创建网络层！" },
     { "key": "menu.servers.error.timeout", "value": "断开连接/重启超时。" },
     { "key": "menu.servers.error.connectFailed", "value": "连接失败。" },
-    { "key": "menu.servers.list.default", "value": "Default Basis Server" },
+    { "key": "menu.servers.list.default", "value": "Default ToolshedVR Server" },
     { "key": "menu.players.search.byNameOrUuid", "value": "依顯示名稱或 UUID 過濾。" },
 
     { "key": "menu.players.search.byName", "value": "按显示名称筛选。" },

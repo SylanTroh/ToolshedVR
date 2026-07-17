@@ -607,9 +607,9 @@
     { "key": "trackerLinking.tuning.calibrationTolerance", "value": "تحمّل المعايرة" },
     { "key": "trackerLinking.tuning.calibrationTolerance.description", "value": "يضاعف حجم منطقة قبول كل جزء من الجسم المستخدمة عند مطابقة المتتبعات بالأدوار أثناء معايرة الجسم الكامل. الأعلى = أكثر تسامحًا مع نسب الجسم غير المعتادة أو المتتبعات المثبتة عاليًا أو الوقفة الواسعة أو وضعية T غير المثالية، مقابل سوء تعيين عرضي. الافتراضي: 1." },
 
-    { "key": "menu.exit.dialog.title", "value": "Basis VR" },
-    { "key": "menu.exit.dialog.body", "value": "هل أنت متأكد من أنك تريد إغلاق Basis؟" },
-    { "key": "menu.exit.dialog.confirm", "value": "الخروج من Basis" },
+    { "key": "menu.exit.dialog.title", "value": "ToolshedVR" },
+    { "key": "menu.exit.dialog.body", "value": "هل أنت متأكد من أنك تريد إغلاق ToolshedVR؟" },
+    { "key": "menu.exit.dialog.confirm", "value": "الخروج من ToolshedVR" },
     { "key": "menu.exit.dialog.reboot", "value": "إعادة التشغيل وإعادة الاتصال" },
     { "key": "menu.exit.dialog.restart", "value": "إعادة التشغيل" },
 
@@ -643,7 +643,7 @@
     { "key": "menu.servers.error.noNetworkLayer", "value": "لم يتم إنشاء طبقة الشبكة!" },
     { "key": "menu.servers.error.timeout", "value": "انتهت مهلة قطع الاتصال/إعادة التشغيل." },
     { "key": "menu.servers.error.connectFailed", "value": "فشل الاتصال." },
-    { "key": "menu.servers.list.default", "value": "Default Basis Server" },
+    { "key": "menu.servers.list.default", "value": "Default ToolshedVR Server" },
     { "key": "menu.players.search.byNameOrUuid", "value": "التصفية حسب الاسم المعروض أو UUID." },
 
     { "key": "menu.players.search.byName", "value": "التصفية بالاسم المعروض." },
