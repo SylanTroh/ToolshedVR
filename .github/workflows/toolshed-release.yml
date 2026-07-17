@@ -37,6 +37,7 @@ jobs:
     runs-on: ${{ matrix.buildPlatform }}
     permissions:
       actions: write
+      contents: write
     env:
       projectPath: Basis
       buildName: ToolshedVR
@@ -170,6 +171,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       actions: write
+      contents: write
     env:
       projectPath: Basis
       buildName: ToolshedVR
