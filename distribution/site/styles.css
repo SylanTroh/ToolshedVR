@@ -34,8 +34,21 @@ p.tagline { color: var(--muted); margin-top: 0; }
   flex-wrap: wrap;
   margin: 2rem 0;
 }
-.downloads a {
+.download-item {
   flex: 1 1 200px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+}
+.checksum {
+  font-size: 0.72rem;
+  color: var(--muted);
+  word-break: break-all;
+  text-align: center;
+}
+.downloads a {
+  width: 100%;
   display: block;
   text-align: center;
   padding: 0.9rem 1.2rem;
