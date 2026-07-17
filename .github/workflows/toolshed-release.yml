@@ -152,6 +152,11 @@ jobs:
         run: >
           ${{ matrix.buildPlatform == 'ubuntu-latest' && 'sudo' || '' }}
           rm -rvf "build/${{ matrix.targetPlatform }}/${{ env.buildName }}_BackUpThisFolder_ButDontShipItWithYourGame"
+      - name: Delete Burst debug info
+        shell: bash
+        run: >
+          ${{ matrix.buildPlatform == 'ubuntu-latest' && 'sudo' || '' }}
+          rm -rvf build/${{ matrix.targetPlatform }}/*_BurstDebugInformation_DoNotShip
       - name: Archive client
         uses: thedoctor0/zip-release@0.7.6
         with:
