@@ -1,10 +1,13 @@
+using System;
 using System.Collections.Generic;
 using Unity.Collections;
+using Unity.Collections.LowLevel.Unsafe;
 using Unity.Jobs;
 using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.Jobs;
 using UnityEngine.Profiling;
+using Object = UnityEngine.Object;
 
 namespace GatorDragonGames.JigglePhysics {
 
@@ -98,6 +101,12 @@ public class JiggleMemoryBus {
 
     private List<JiggleTree> pendingProcessingAdds;
     private List<JiggleTree> pendingProcessingRemoves;
+
+    // Buffers whose owning JiggleTreeJobData was re-pointed by JiggleTree.Set while its old copy
+    // may still sit in jiggleTreeStructs. That copy is only swapped out when the tree commit
+    // flips, so these pointers must stay alive until the end of the flip — freeing them on the
+    // next Simulate (the FreeOnComplete path) is too early and the sim job reads freed memory.
+    private List<IntPtr> deferredFlipFrees;
 
     private JiggleMemoryFragmenter memoryFragmenter;
 
@@ -322,6 +331,7 @@ public void GetResults(out JiggleTransform[] poses, out JiggleTreeJobData[] tree
         pendingRemoveTrees = new();
         pendingTeleports = new();
         rootIDToTreeIndex = new();
+        deferredFlipFrees = new();
 
         memoryFragmenter = new JiggleMemoryFragmenter(4096);
         personalColliderMemoryFragmenter = new JiggleMemoryFragmenter(2048);
@@ -405,7 +415,13 @@ public void GetResults(out JiggleTransform[] poses, out JiggleTreeJobData[] tree
             transformAccessList[j] = GetDummyTransform(j);
             transformRootAccessList[j] = GetDummyTransform(j);
         }
+        if (removedTree.colliderCount > 0) {
+            personalColliderMemoryFragmenter.Free((int)removedTree.colliderIndexOffset, (int)removedTree.colliderCount);
+        }
         for (int j = (int)removedTree.colliderIndexOffset; j < removedTree.colliderIndexOffset + removedTree.colliderCount; j++) {
+            var freedCollider = personalColliders[j];
+            freedCollider.enabled = false;
+            personalColliders[j] = freedCollider;
             personalColliderTransformAccessList[j] = GetDummyTransform(j);
         }
     }
@@ -467,7 +483,10 @@ public void GetResults(out JiggleTransform[] poses, out JiggleTreeJobData[] tree
         if (jiggleTreeJobData.colliderCount > 0) {
             var success = personalColliderMemoryFragmenter.TryAllocate((int)jiggleTreeJobData.colliderCount, out var colliderStartIndex);
             if (!success) {
-                throw new UnityException("Ran out of memory for personal colliders! This is a bug, please report it!");
+                // Fail the add instead of throwing: a throw here escapes CommitTrees mid-batch and
+                // leaves pendingAddTrees stranded, permanently wedging the commit state machine.
+                Debug.LogError("JigglePhysics: Ran out of memory for personal colliders! This is a bug, please report it!");
+                return false;
             }
 
             jiggleTree.SetColliderIndexOffset(colliderStartIndex);
@@ -593,7 +612,15 @@ public void GetResults(out JiggleTransform[] poses, out JiggleTreeJobData[] tree
             for (int i = 0; i < pendingAddSceneColliderCount; i++) {
                 var collider = pendingSceneColliderAdd[i];
                 collider.collider.enabled = true;
-                
+
+                // Re-adding a transform that is already committed must refresh its slot, not take
+                // a second one: allocating again overwrites the transform->index entry and orphans
+                // the old slot, which stays allocated and enabled with no way to ever remove it.
+                if (sceneColliderTransformToIndex.TryGetValue(collider.transform, out var existingIndex)) {
+                    sceneColliderArray[existingIndex] = collider.collider;
+                    continue;
+                }
+
                 var found = sceneColliderMemoryFragmenter.TryAllocate(1, out var index);
                 if (!found) {
                     throw new UnityException( "Ran out of scene collider memory, this is a bug please report it! (It should've been allocated in advance");
@@ -615,6 +642,16 @@ public void GetResults(out JiggleTransform[] poses, out JiggleTreeJobData[] tree
         } else if (commitSceneColliderState == CommitState.ProcessingTransformAccess) {
             doubleBufferSceneColliderTransformAccessArray.GenerateNewAccessArrays(ref currentSceneColliderTransformAccessIndex, out var hasFinishedSceneColliders, sceneColliderTransformAccessList, transformAccessBatchSize);
             if (!hasFinishedSceneColliders) return;
+            // The managed mirror is the writer for scene colliders, so it has to retire slots whose
+            // transform died without a matching remove — otherwise this copy resurrects them, undoing
+            // the read job's isValid self-heal, and the collider keeps colliding from wherever it was.
+            for (int i = 0; i < sceneColliderCount; i++) {
+                if (!sceneColliderArray[i].enabled) continue;
+                if (i < sceneColliderTransformAccessList.Count && sceneColliderTransformAccessList[i]) continue;
+                var deadCollider = sceneColliderArray[i];
+                deadCollider.enabled = false;
+                sceneColliderArray[i] = deadCollider;
+            }
             NativeArray<JiggleCollider>.Copy(sceneColliderArray, sceneColliders, sceneColliderCount);
             doubleBufferSceneColliderTransformAccessArray.Flip();
             commitSceneColliderState = CommitState.Idle;
@@ -722,13 +759,14 @@ public void GetResults(out JiggleTransform[] poses, out JiggleTreeJobData[] tree
                 }
 
                 var found = memoryFragmenter.TryAllocate(pointCount, out var startIndex);
-                if (!found) {
-                    throw new UnityException("Ran out of memory for jiggle points, this is a bug please report it!");
-                }
-
-                if (startIndex == -1) {
+                if (!found || startIndex == -1) {
+                    // Same wedge-avoidance as the collider pool: skip the tree and keep the batch alive.
+                    Debug.LogError("JigglePhysics: Ran out of memory for jiggle points, this is a bug please report it!");
+                    jiggleTree.SetDirty();
                     pendingAddTrees.RemoveAt(i);
-                    throw new UnityException("bad index generated... ran out of memory?");
+                    pendingAddCount--;
+                    i--;
+                    continue;
                 }
 
                 if (!TryAddTransformsToSlice(startIndex, jiggleTree)) {
@@ -801,6 +839,9 @@ public void GetResults(out JiggleTransform[] poses, out JiggleTreeJobData[] tree
             doubleBufferTransformAccessArray.Flip();
             doubleBufferTransformRootAccessArray.Flip();
             doubleBufferPersonalColliderTransformAccessArray.Flip();
+            // The flip above is the point where every re-pointed tree struct has left
+            // jiggleTreeStructs (RemoveTree ran this call), so the old buffers are unreachable.
+            DrainDeferredFlipFrees();
             commitTreeState = CommitState.Idle;
         }
     }
@@ -832,7 +873,10 @@ public void GetResults(out JiggleTransform[] poses, out JiggleTreeJobData[] tree
     public void ScheduleRemove(JiggleColliderSerializable jiggleCollider) {
         var count = pendingSceneColliderAdd.Count;
         for (int i = 0; i < count; i++) {
-            if (pendingSceneColliderAdd[i].transform == jiggleCollider.transform) {
+            // ReferenceEquals, not ==: Unity's equality operator reports any two destroyed
+            // transforms as equal, so a removal issued after the avatar was destroyed would
+            // cancel an unrelated pending add and drop the real removal on the floor.
+            if (ReferenceEquals(pendingSceneColliderAdd[i].transform, jiggleCollider.transform)) {
                 pendingSceneColliderAdd.RemoveAt(i);
                 pendingSceneColliderAddSet.Remove(jiggleCollider.transform);
                 return;
@@ -874,6 +918,20 @@ public void GetResults(out JiggleTransform[] poses, out JiggleTreeJobData[] tree
                 }
             }
         }
+    }
+
+    public void FreeOnCommitFlip(IntPtr pointer) {
+        deferredFlipFrees.Add(pointer);
+    }
+
+    private void DrainDeferredFlipFrees() {
+        var count = deferredFlipFrees.Count;
+        for (int i = 0; i < count; i++) {
+            unsafe {
+                UnsafeUtility.Free((void*)deferredFlipFrees[i], Allocator.Persistent);
+            }
+        }
+        deferredFlipFrees.Clear();
     }
 
     public void ScheduleTeleport(int rootID, float3 deltaPosition) {
@@ -955,6 +1013,7 @@ public void GetResults(out JiggleTransform[] poses, out JiggleTreeJobData[] tree
     }
 
     public void Dispose() {
+        DrainDeferredFlipFrees();
         if (jiggleTreeStructs.IsCreated) {
             jiggleTreeStructs.Dispose();
             simulateInputPoses.Dispose();

@@ -12,8 +12,6 @@ using System.Collections.Generic;
 using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.AddressableAssets;
-using UnityEngine.Animations.Rigging;
-
 namespace Basis.Scripts.Drivers
 {
     /// <summary>
@@ -108,10 +106,17 @@ namespace Basis.Scripts.Drivers
         /// <param name="player">The local player instance.</param>
         /// <param name="harvestedHeadChop">Head-chop targets harvested by ContentPolice during the
         /// avatar load. Consumed here and discarded; not stored on the avatar.</param>
-        public void InitialLocalCalibration(BasisLocalPlayer player, List<BasisHeadChop.HeadChopTarget> harvestedHeadChop)
+        public void InitialLocalCalibration(BasisLocalPlayer player, List<BasisHeadChop.HeadChopTarget> harvestedHeadChop, bool fromSpineRebuild = false)
         {
             Instance = this;
             BasisDebug.Log("InitialLocalCalibration");
+            if (!fromSpineRebuild)
+            {
+                // Genuine new-avatar load: forget any spine proportion baked into the PREVIOUS avatar. The
+                // rebuild's own re-run passes fromSpineRebuild=true so it keeps what it just baked into THIS one.
+                BasisLocalRigDriver.AppliedSpineProportion = 1f;
+                BasisLocalRigDriver.SpineProportionApplied = false;
+            }
             BasisCalibrationDebugRecorder.Begin(SafeAvatarLabel(player));
             RecordCalibrationMeta(player);
             RecordCalibrationStage("Spawn", player);
@@ -133,7 +138,6 @@ namespace Basis.Scripts.Drivers
             player.LocalRigDriver.Initialize(player, Mapping);
 
             player.LocalRigDriver.CleanupBeforeContinue();
-            player.LocalRigDriver.AdditionalTransforms.Clear();
             GameObject AvatarAnimatorParent = player.BasisAvatar.Animator.gameObject;
             ScaleAvatarModification.ReInitialize(player.BasisAvatar.Animator);
 
@@ -181,8 +185,6 @@ namespace Basis.Scripts.Drivers
                 }
             }
 
-            player.LocalRigDriver.Builder = BasisHelpers.GetOrAddComponent<RigBuilder>(AvatarAnimatorParent);
-            player.LocalRigDriver.Builder.enabled = false;
 
             Calibration(player);
 
@@ -293,7 +295,7 @@ namespace Basis.Scripts.Drivers
         /// <summary>
         /// Scales the head to zero, effectively hiding it (e.g., for first-person rigs).
         /// </summary>
-        public static void ScaleheadToZero()
+        public static void ScaleHeadToZero()
         {
             if (IsNormalHead == false)
             {
@@ -474,6 +476,38 @@ namespace Basis.Scripts.Drivers
         }
 
         /// <summary>
+        /// Bakes the wearer's spine-proportion scale into a rebuilt humanoid Avatar (a humanoid bone's length
+        /// can only be changed via its Avatar definition, not a runtime transform write), reassigns it, and
+        /// re-runs the full local calibration so the rig graph + all T-pose caches pick up the new proportions.
+        /// Called deferred on the main thread from BasisLocalRigDriver's calibration capture, once per avatar.
+        /// No-op that keeps the original avatar on any failure.
+        /// </summary>
+        public void RebuildAvatarForSpineProportion(float scale)
+        {
+            // ==== SPINE PROPORTION DEFORMATION DISABLED 2026-07-18 (revisit later). Uncomment to bake the
+            //      wearer's spine scale into a rebuilt humanoid Avatar and re-run calibration. ====
+            // BasisLocalPlayer player = BasisLocalPlayer.Instance;
+            // if (player == null || player.BasisAvatar == null || player.BasisAvatar.Animator == null)
+            // {
+            //     return;
+            // }
+            // Animator animator = player.BasisAvatar.Animator;
+            // if (!animator.isHuman)
+            // {
+            //     return;
+            // }
+            // // T-pose so BuildHumanAvatar bakes the intended bind (PutAvatarIntoTPose force-updates the animator).
+            // PutAvatarIntoTPose();
+            // if (!Basis.Scripts.Avatar.BasisSpineProportionAvatarBuilder.TryRebuildScaledSpine(animator, scale, out UnityEngine.Avatar newAvatar))
+            // {
+            //     ResetAvatarAnimator();
+            //     return;
+            // }
+            // animator.avatar = newAvatar;
+            // InitialLocalCalibration(player, new List<BasisHeadChop.HeadChopTarget>(), fromSpineRebuild: true);
+        }
+
+        /// <summary>
         /// Swaps the animator to the T-pose controller, forces an update, and raises the state change event.
         /// </summary>
         public void PutAvatarIntoTPose()
@@ -570,7 +604,7 @@ namespace Basis.Scripts.Drivers
                     case BasisBoneTrackedRole.CenterEye:
                         {
                             // Convert avatar-local eye position to world and apply
-                            GetWorldSpacePos(BasisHelpers.AvatarPositionConversion(basisPlayer.BasisAvatar.AvatarEyePosition), RootPosition, out float3 world);
+                            GetWorldSpacePos(BasisHelpers.AvatarPositionConversion(basisPlayer.BasisAvatar.AvatarEyePosition), RootPosition, RootRotation, out float3 world);
                             SetInitialData(rootTransform, control, role, world, RootRotation);
                             break;
                         }
@@ -578,7 +612,7 @@ namespace Basis.Scripts.Drivers
                     case BasisBoneTrackedRole.Mouth:
                         {
                             // Convert avatar-local mouth position to world and apply
-                            GetWorldSpacePos(BasisHelpers.AvatarPositionConversion(basisPlayer.BasisAvatar.AvatarMouthPosition), RootPosition, out float3 world);
+                            GetWorldSpacePos(BasisHelpers.AvatarPositionConversion(basisPlayer.BasisAvatar.AvatarMouthPosition), RootPosition, RootRotation, out float3 world);
                             SetInitialData(rootTransform, control, role, world, RootRotation);
                             break;
                         }
@@ -610,14 +644,15 @@ namespace Basis.Scripts.Drivers
         }
 
         /// <summary>
-        /// Converts a local avatar-space position to world space based on animator position.
+        /// Converts a local avatar-space position to world space based on animator position and rotation.
         /// </summary>
         /// <param name="localAvatarSpace">Point in avatar-local coordinates.</param>
         /// <param name="AnimatorPosition">Animator world position used as origin.</param>
+        /// <param name="AnimatorRotation">Animator world rotation used as the basis.</param>
         /// <param name="position">Out: computed world position.</param>
-        public void GetWorldSpacePos(Vector3 localAvatarSpace, Vector3 AnimatorPosition, out float3 position)
+        public void GetWorldSpacePos(Vector3 localAvatarSpace, Vector3 AnimatorPosition, Quaternion AnimatorRotation, out float3 position)
         {
-            position = BasisHelpers.ConvertFromLocalSpace(localAvatarSpace, AnimatorPosition);
+            position = BasisHelpers.ConvertFromLocalSpace(localAvatarSpace, AnimatorPosition, AnimatorRotation);
         }
 
         /// <summary>

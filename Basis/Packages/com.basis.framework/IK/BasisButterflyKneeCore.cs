@@ -1,4 +1,5 @@
-namespace UnityEngine.Animations.Rigging
+using UnityEngine;
+namespace Basis.IK
 {
     // Inputs for one leg's butterfly-knee solve. World space unless noted.
     public struct BasisButterflyKneeInput
@@ -35,7 +36,7 @@ namespace UnityEngine.Animations.Rigging
     //
     // Pure + stream-free so it can be swept in edit-mode tests (see BasisButterflyKneeSweepTests). The live wiring
     // (BasisLocalRigDriver, no-knee-tracker branch) gathers the inputs and feeds the result through the existing
-    // PositionLeftLowerLeg / RotationLeftLowerLeg / EnableLeftLowerLeg knee-hint channel. Sibling of the crouch
+    // PositionLeftLowerLeg / EnableLeftLowerLeg knee-hint channel. Sibling of the crouch
     // knee-splay in BasisFootSimulateJob, but for the tracked-foot supine case the foot driver never runs.
     public static class BasisButterflyKneeCore
     {

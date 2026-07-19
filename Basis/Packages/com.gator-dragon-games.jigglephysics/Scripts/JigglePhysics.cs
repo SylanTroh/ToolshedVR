@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using Unity.Collections;
+using Unity.Collections.LowLevel.Unsafe;
 using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.Profiling;
@@ -55,11 +57,28 @@ public static class JigglePhysics {
         }
             
         var rootJiggleTreeSegmentsCount = rootJiggleTreeSegments.Count;
+
+        // Tree regeneration (JiggleTree.Set) and parameter pushes MemCpy into buffers the
+        // in-flight simulate job is still reading/writing — Simulate() completes it too late,
+        // after the mutation. Sync first whenever this frame will mutate.
+        bool mutatesSimData = _globalDirty;
+        if (!mutatesSimData) {
+            for (int i = 0; i < rootJiggleTreeSegmentsCount; i++) {
+                if (rootJiggleTreeSegments[i].GetHasAnimatedParameters()) {
+                    mutatesSimData = true;
+                    break;
+                }
+            }
+        }
+        if (mutatesSimData) {
+            jobs?.CompleteSimulate();
+        }
+
         for (int i = 0; i < rootJiggleTreeSegmentsCount; i++) {
             var segment = rootJiggleTreeSegments[i];
             segment.UpdateParametersIfNeeded();
         }
-            
+
         jobs = GetJiggleJobs(lastFixedCurrentTime, fixedDeltaTime);
         jobs.SetCollisionCulling(collisionFrustumCull, collisionDistanceCull, collisionCullDistance, cullingCameraBuffer, cullingCameraCount);
         jobs.Simulate(lastFixedCurrentTime, realTime, skips);
@@ -75,6 +94,10 @@ public static class JigglePhysics {
 
     public static void CompletePose() {
         jobs?.CompletePoses();
+    }
+
+    public static void CompleteSimulate() {
+        jobs?.CompleteSimulate();
     }
 
     public static void OnDrawGizmos() {
@@ -106,9 +129,16 @@ public static class JigglePhysics {
         jiggleRootLookup = new Dictionary<Transform, JiggleTreeSegment>();
         _globalDirty = true;
         jobs = null;
+        // JiggleRenderer.Dispose released the instancers and chunk buffers, so leaving this latched
+        // would skip the OnEnable that rebuilds them and silently stop drawing gizmos for the rest
+        // of the session (Initialize only runs again on a domain reload).
+        initializedRendering = false;
     }
 
     public static void ScheduleRender() {
+        if (jobs == null) {
+            return;
+        }
         if (!initializedRendering) {
             JiggleRenderer.OnEnable(jobs);
             initializedRendering = true;
@@ -117,6 +147,9 @@ public static class JigglePhysics {
     }
 
     public static void CompleteRender(Material proceduralMaterial, Mesh sphere, Mesh capsule) {
+        if (jobs == null) {
+            return;
+        }
         if (!initializedRendering) {
             JiggleRenderer.OnEnable(jobs);
             initializedRendering = true;
@@ -189,10 +222,18 @@ public static class JigglePhysics {
     public static void FreeOnComplete(IntPtr pointer) {
         jobs.FreeOnComplete(pointer);
     }
+
+    public static unsafe void FreeOnCommitFlip(IntPtr pointer) {
+        if (jobs != null) {
+            jobs.FreeOnCommitFlip(pointer);
+        } else {
+            UnsafeUtility.Free((void*)pointer, Allocator.Persistent);
+        }
+    }
     
     public static void AddJiggleTreeSegment(JiggleTreeSegment jiggleTreeSegment) {
         if (!jiggleRootLookup.TryAdd(jiggleTreeSegment.transform, jiggleTreeSegment)) {
-            Debug.LogError("Multiple Jiggle trees detected targeting the same root transform, Jiggle Physics doesn't support this.", jiggleTreeSegment.transform);
+            Debug.LogWarning("Multiple Jiggle trees detected targeting the same root transform, Jiggle Physics doesn't support this.", jiggleTreeSegment.transform);
             return;
         }
         RemoveAddChildren(jiggleTreeSegment.transform);

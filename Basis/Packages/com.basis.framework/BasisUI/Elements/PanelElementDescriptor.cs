@@ -14,6 +14,33 @@ namespace Basis.BasisUI
     public class PanelElementDescriptor : AddressableUIInstanceBase
     {
 
+        public static RectTransform BuildActionRow(RectTransform parent, string name)
+        {
+            GameObject rowGO = new GameObject(name, typeof(RectTransform));
+            RectTransform rowRect = (RectTransform)rowGO.transform;
+            rowRect.SetParent(parent, false);
+
+            rowRect.anchorMin = new Vector2(0f, 1f);
+            rowRect.anchorMax = new Vector2(1f, 1f);
+            rowRect.pivot = new Vector2(0.5f, 1f);
+
+            HorizontalLayoutGroup hlg = rowGO.AddComponent<HorizontalLayoutGroup>();
+            hlg.childForceExpandWidth = true;
+            hlg.childForceExpandHeight = false;
+            hlg.childControlWidth = true;
+            hlg.childControlHeight = true;
+            hlg.spacing = 8f;
+            hlg.padding = new RectOffset(8, 8, 4, 8);
+
+            ContentSizeFitter fitter = rowGO.AddComponent<ContentSizeFitter>();
+            fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+            LayoutElement layout = rowGO.AddComponent<LayoutElement>();
+            layout.flexibleWidth = 1f;
+
+            return rowRect;
+        }
+
         public static class ElementStyles
         {
             public static string ScrollViewGrid => "Packages/com.basis.sdk/Prefabs/Panel Elements/Scroll View Vertical - Grid Variant.prefab";
@@ -78,6 +105,7 @@ namespace Basis.BasisUI
             {
                 // If a custom content parent hasn't been assigned, just use itself.
                 if (!_contentParent) _contentParent = rectTransform;
+                if (!_contentParent) return null;
                 // If the content parent is needed, turn it on.
                 // We leave this off by default to better line up out canvas layouts.
                 _contentParent.gameObject.SetActive(true);

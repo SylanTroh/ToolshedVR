@@ -20,7 +20,10 @@
 #include "protocol/basis_rtmp.h"
 #include "protocol/basis_ts.h"
 #include "protocol/basis_mp4.h"
+#include "protocol/basis_webm.h"
+#include "protocol/basis_ogg.h"
 #include "protocol/basis_wav.h"
+#include "protocol/basis_mp3.h"
 #include "protocol/basis_http.h"
 #include "protocol/basis_hls.h"
 #include "protocol/basis_rist.h"
@@ -125,6 +128,7 @@ struct basis_media_engine {
     basis_mutex_t submit_lock;
     basis_media_state_t state;
     char error[512];
+    char transport[64];   /* scheme by default; negotiated detail via on_transport */
 
     basis_media_sink_t sink;
 
@@ -163,9 +167,13 @@ struct basis_media_engine {
 
     /* In-band CEA-608 caption extraction. video_hevc selects the SEI NAL layout,
      * set from the video format; the context owns the 608 decoder + cue store and
-     * is scanned per AU on the demux thread, polled from the main thread. */
+     * is scanned per AU on the demux thread, polled from the main thread.
+     * video_h26x gates the scan entirely: the caption walker is an Annex-B NAL
+     * walk, and raw VP9/AV1 samples can contain 00 00 01 runs it would misparse
+     * into the 608 decoder. */
     basis_caption_ctx_t* captions;
     int video_hevc;
+    int video_h26x;
 
     /* Set on the first on_video_format announce. Every demuxer announces its
      * track formats before payload, so audio frames arriving with this still
@@ -219,6 +227,62 @@ int basis_engine_is_paused(basis_media_engine_t* e) { return e ? e->paused : 0; 
 int basis_engine_is_running(basis_media_engine_t* e) { return e ? e->running : 0; }
 int basis_engine_is_paced(basis_media_engine_t* e) { return e ? e->paced : 0; }
 
+/* ---- render-event liveness registry ------------------------------------
+ * OnRenderEvent (Unity render thread) is handed the engine pointer and can fire
+ * concurrently with basis_media_close on the main thread. C# quiesces render
+ * events before closing, but a stale event must be a safe no-op, not a
+ * use-after-free. Every open engine is registered here; basis_engine_render_event
+ * dispatches under g_registry_lock only while the engine is still registered, and
+ * close removes it under the same lock — waiting out any in-flight event — before
+ * it frees the decoder and engine.
+ *
+ * Engines are keyed by pointer, so this stops a dispatch against a freed engine but
+ * not the narrow ABA case where a delayed event's pointer matches a *new* engine
+ * that reused the freed address. For the shipping C# binding that is benign: it
+ * issues only RENDER_UPDATE (idempotent — republishes the current frame). But
+ * RENDER_RELEASE is part of the public render-event ABI, and a caller that delivers
+ * one across a close+reopen could tear down the reused engine's decoder — so this
+ * registry's ABA-safety is only as strong as "no RELEASE is delivered after close."
+ * Closing the window fully needs a generation-stamped handle in the event payload
+ * (a C# ABI change) — deliberately out of scope here. */
+#define BASIS_MAX_ENGINES 64
+static basis_mutex_t g_registry_lock;
+static int           g_registry_ready;
+static basis_media_engine_t* g_engines[BASIS_MAX_ENGINES];
+
+/* opens run on Unity's main thread, so first-use init needs no extra guard. */
+static void registry_ensure(void) {
+    if (!g_registry_ready) { mutex_init(&g_registry_lock); g_registry_ready = 1; }
+}
+static int registry_add(basis_media_engine_t* e) {
+    registry_ensure();
+    int ok = 0;
+    mutex_lock(&g_registry_lock);
+    for (int i = 0; i < BASIS_MAX_ENGINES; ++i) if (!g_engines[i]) { g_engines[i] = e; ok = 1; break; }
+    mutex_unlock(&g_registry_lock);
+    return ok;   /* 0 => registry full */
+}
+static void registry_remove(basis_media_engine_t* e) {
+    if (!g_registry_ready) return;
+    mutex_lock(&g_registry_lock);
+    for (int i = 0; i < BASIS_MAX_ENGINES; ++i) if (g_engines[i] == e) { g_engines[i] = NULL; break; }
+    mutex_unlock(&g_registry_lock);
+}
+
+void basis_engine_render_event(basis_media_engine_t* e, int event_id) {
+    if (!e || !g_registry_ready) return;
+    mutex_lock(&g_registry_lock);
+    int live = 0;
+    for (int i = 0; i < BASIS_MAX_ENGINES; ++i) if (g_engines[i] == e) { live = 1; break; }
+    /* Dispatch under the lock so registry_remove (in close) blocks until this
+     * returns — the decoder can't be freed while a render event is using it. */
+    if (live && e->decoder) {
+        if (event_id == BASIS_RENDER_UPDATE) basis_decoder_render_update(e->decoder);
+        else if (event_id == BASIS_RENDER_RELEASE) basis_decoder_render_release(e->decoder);
+    }
+    mutex_unlock(&g_registry_lock);
+}
+
 /* Real-time delivery pacing. Blocks the demux thread so an access unit is handed to the
  * decoder no more than BASIS_PACE_LEAD_US ahead of a fixed 1x clock anchored to the first
  * AU — stalling the socket read (TCP backpressure) so a faster-than-real-time source can't
@@ -264,6 +328,7 @@ static void pace_gate(basis_media_engine_t* e, int64_t pts_us) {
 static void sink_video_format(void* user, basis_codec_t codec, const uint8_t* ed, int ed_len, int w, int h) {
     basis_media_engine_t* e = (basis_media_engine_t*)user;
     e->video_hevc = (codec == BASIS_CODEC_H265);
+    e->video_h26x = (codec == BASIS_CODEC_H264 || codec == BASIS_CODEC_H265);
     e->video_format_seen = 1;
     mutex_lock(&e->submit_lock);
     basis_decoder_set_video_format(e->decoder, codec, ed, ed_len, w, h);
@@ -282,8 +347,10 @@ static void sink_video_au(void* user, const uint8_t* au, int len, int64_t pts, i
     basis_decoder_submit_video(e->decoder, au, len, pts, key);
     mutex_unlock(&e->submit_lock);
     /* Extract in-band captions from the same Annex B AU. Independent of the
-     * decoder, so outside submit_lock; the caption context locks its own store. */
-    basis_caption_scan_au(e->captions, au, len, e->video_hevc, pts);
+     * decoder, so outside submit_lock; the caption context locks its own store.
+     * H.26x only — see video_h26x. */
+    if (e->video_h26x)
+        basis_caption_scan_au(e->captions, au, len, e->video_hevc, pts);
     /* CONNECTING/BUFFERING -> PLAYING once the OS decoder is actually producing
      * frames (a few buffered), so the state doesn't sit at Buffering forever. */
     if ((e->state == BASIS_MEDIA_STATE_CONNECTING || e->state == BASIS_MEDIA_STATE_BUFFERING) &&
@@ -324,6 +391,14 @@ static void sink_audio_frame(void* user, const uint8_t* data, int len, int64_t p
 }
 static void sink_state(void* user, basis_media_state_t s) { basis_engine_set_state((basis_media_engine_t*)user, s); }
 static void sink_error(void* user, const char* m) { basis_engine_set_error((basis_media_engine_t*)user, m); }
+static void sink_transport(void* user, const char* t) {
+    basis_media_engine_t* e = (basis_media_engine_t*)user;
+    if (!e || !t) return;
+    mutex_lock(&e->lock);
+    strncpy(e->transport, t, sizeof(e->transport) - 1);
+    e->transport[sizeof(e->transport) - 1] = 0;
+    mutex_unlock(&e->lock);
+}
 static void sink_eos(void* user) { basis_engine_set_state((basis_media_engine_t*)user, BASIS_MEDIA_STATE_ENDED); }
 static void sink_duration(void* user, int64_t us) { basis_media_engine_t* e = (basis_media_engine_t*)user; if (us > 0) e->duration_us = us; }
 /* A raised error is fatal to the current demux run: the reconnect loop already
@@ -370,6 +445,7 @@ static void install_sink(basis_media_engine_t* e) {
     e->sink.on_error = sink_error;
     e->sink.on_end_of_stream = sink_eos;
     e->sink.on_duration = sink_duration;
+    e->sink.on_transport = sink_transport;
     e->sink.take_seek = sink_take_seek;
     e->sink.is_running = sink_is_running;
 }
@@ -604,27 +680,31 @@ static DWORD WINAPI reader_entry(LPVOID p) { reader_body((reader_args_t*)p); ret
 static void* reader_entry(void* p) { reader_body((reader_args_t*)p); return NULL; }
 #endif
 
-#if defined(_WIN32)
+#if defined(_WIN32) || defined(__ANDROID__)
 /* Byte-source reseek for the HTTP VOD path (handed to the MP4 demuxer). Parks
  * the read-ahead reader, swaps the response for a ranged one, flushes buffered
- * bytes and the replayed sniff prefix, and resumes. Runs on the demux thread. */
+ * bytes and the replayed sniff prefix, and resumes. Runs on the demux thread.
+ * The abort/reseek primitives are platform-supplied (WinHTTP or the Android JNI
+ * source) so the park/flush choreography lives in one place. */
 typedef struct {
     void* http;
     byte_ring_t* ring;      /* NULL when the demuxer reads the source directly */
     prefix_src_t* ps;
     volatile int* running;
+    void (*abort_fn)(void*);
+    int  (*reseek_fn)(void*, long long);
 } http_seek_src_t;
 
 static int http_reseek(void* ctx, int64_t abs_offset) {
     http_seek_src_t* s = (http_seek_src_t*)ctx;
     if (s->ring) {
         s->ring->reseek_park = 1;
-        basis_win_http_abort(s->http);   /* unblock a read the reader is parked in */
+        s->abort_fn(s->http);            /* unblock a read the reader is parked in */
         while (!s->ring->reader_parked && *s->running) sleep_ms(1);
     } else {
-        basis_win_http_abort(s->http);   /* demux thread is the only reader */
+        s->abort_fn(s->http);            /* demux thread is the only reader */
     }
-    int rc = basis_win_http_reseek(s->http, abs_offset);
+    int rc = s->reseek_fn(s->http, (long long)abs_offset);
     s->ps->prefix_pos = s->ps->prefix_len;   /* sniffed offset-0 bytes must not replay */
     if (s->ring) {
         mutex_lock(&s->ring->lock);
@@ -686,8 +766,10 @@ static void run_hls(demux_ctx_t* c) {
     c->e->pace_delivery = 1;
     c->sink->on_state(c->sink->user, BASIS_MEDIA_STATE_BUFFERING);
     /* Seeks reposition inside the HLS source (segment granularity) via
-     * basis_media_seek_us -> basis_hls_seek_ms, so the demuxer gets no
-     * byte-level reseek here. */
+     * basis_media_seek_us -> basis_hls_request_seek. There is no byte-level
+     * reseek: the segment producer rebuilds its fetch queue and, at the flushed
+     * boundary, basis_hls_read raises BASIS_READ_REPOSITION so the demuxer drops
+     * its pre-seek state and re-anchors pacing before the target segment plays. */
     mutex_lock(&c->e->lock);
     c->e->active_hls = hls;
     mutex_unlock(&c->e->lock);
@@ -794,11 +876,20 @@ static void run_http_like(demux_ctx_t* c) {
     prefix_src_t ps = { head, head_len, 0, rd, src };
 
     int is_mp4 = looks_like_mp4(head, head_len);
+    int is_webm = head_len >= 4 && head[0] == 0x1A && head[1] == 0x45 &&
+                  head[2] == 0xDF && head[3] == 0xA3; /* EBML magic */
     int is_wav = head_len >= 12 && memcmp(head, "RIFF", 4) == 0 && memcmp(head + 8, "WAVE", 4) == 0;
+    int is_ogg = head_len >= 4 && memcmp(head, "OggS", 4) == 0;
     int is_ts  = (head_len >= 1 && head[0] == 0x47);
-    if (!is_mp4 && !is_wav && !is_ts) {
+    /* MP3 is sniffed last: its magic is only an 11-bit frame sync (plus a leading
+     * "ID3" tag when tagged), the weakest of the container signatures. */
+    int is_mp3 = (head_len >= 3 && memcmp(head, "ID3", 3) == 0) || basis_mp3_sniff(head, head_len);
+    if (!is_mp4 && !is_webm && !is_wav && !is_ogg && !is_ts && !is_mp3) {
         is_mp4 = ends_with_ci(c->parts->path, ".mp4") || ends_with_ci(c->parts->path, ".m4s");
+        is_webm = ends_with_ci(c->parts->path, ".webm");
         is_wav = ends_with_ci(c->parts->path, ".wav");
+        is_ogg = ends_with_ci(c->parts->path, ".opus") || ends_with_ci(c->parts->path, ".ogg");
+        is_mp3 = ends_with_ci(c->parts->path, ".mp3");
     }
 
     /* Paced (VOD): drain the network into a read-ahead ring on a reader thread and
@@ -828,18 +919,35 @@ static void run_http_like(demux_ctx_t* c) {
      * absolute seeks with a ranged refetch; everything else demuxes as before. */
     basis_reseek_fn reseek = NULL;
     void* reseek_ctx = NULL;
+    int64_t stream_size = -1;   /* total body size for the Ogg granule seek; -1 = unknown */
 #if defined(_WIN32)
-    http_seek_src_t seek_src = { src, use_readahead ? &ring : NULL, &ps, &c->e->running };
+    http_seek_src_t seek_src = { src, use_readahead ? &ring : NULL, &ps, &c->e->running,
+                                 basis_win_http_abort, basis_win_http_reseek };
     if (c->e->paced && basis_win_http_can_reseek(src)) {
         reseek = http_reseek;
         reseek_ctx = &seek_src;
+        stream_size = basis_win_http_content_length(src);
+    }
+#elif defined(__ANDROID__)
+    http_seek_src_t seek_src = { src, use_readahead ? &ring : NULL, &ps, &c->e->running,
+                                 basis_jni_https_abort, basis_jni_https_reseek };
+    if (c->e->paced && basis_jni_https_can_reseek(src)) {
+        reseek = http_reseek;
+        reseek_ctx = &seek_src;
+        stream_size = basis_jni_https_content_length(src);
     }
 #endif
 
     if (is_mp4)
         basis_mp4_run(c->sink, demux_read, demux_ctx, reseek, reseek_ctx);
+    else if (is_webm)
+        basis_webm_run(c->sink, demux_read, demux_ctx, reseek, reseek_ctx);
     else if (is_wav)
         basis_wav_run(c->sink, demux_read, demux_ctx);
+    else if (is_ogg)
+        basis_ogg_run(c->sink, demux_read, demux_ctx, reseek, reseek_ctx, stream_size);
+    else if (is_mp3)
+        basis_mp3_run(c->sink, demux_read, demux_ctx, reseek, reseek_ctx);
     else
         basis_ts_run(c->sink, demux_read, demux_ctx); /* default to MPEG-TS */
 
@@ -1076,6 +1184,8 @@ static basis_media_engine_t* open_impl(const char* url, const char* audio_url, i
     mutex_init(&e->lock);
     mutex_init(&e->submit_lock);
     e->state = BASIS_MEDIA_STATE_IDLE;
+    /* Default until a protocol reports negotiated detail (RTSP does). */
+    strncpy(e->transport, e->parts.scheme, sizeof(e->transport) - 1);
 
     /* Optional: a NULL context just means captions are unavailable (scan/poll no-op). */
     e->captions = basis_caption_create();
@@ -1123,6 +1233,22 @@ static basis_media_engine_t* open_impl(const char* url, const char* audio_url, i
     }
     if (has_audio) e->audio_thread_started = 1;
 
+    /* Live now: the pointer is about to reach C#, which may issue render events.
+     * Registered last so no partially-built engine is ever visible to a dispatch.
+     * If the registry is full (too many concurrent players), fail cleanly rather
+     * than hand back an engine whose render events would be silently ignored. */
+    if (!registry_add(e)) {
+        e->running = 0;
+        thread_join(e);
+        audio_thread_join(e);
+        basis_decoder_destroy(e->decoder);
+        basis_io_global_shutdown();
+        basis_caption_destroy(e->captions);
+        mutex_destroy(&e->submit_lock);
+        mutex_destroy(&e->lock);
+        free(e);
+        return NULL;
+    }
     return e;
 }
 
@@ -1141,8 +1267,14 @@ BASIS_API basis_media_engine_t* BASIS_CALL basis_media_open_dual(const char* vid
 BASIS_API void BASIS_CALL basis_media_close(basis_media_engine_t* e) {
     if (!e) return;
 
-    /* Stop the demux threads first so nothing submits while we tear down. Both
-     * legs observe the same running flag; join both before freeing the decoder. */
+    /* Deregister first, before anything is torn down: this blocks until any
+     * in-flight render event returns and makes every later one a no-op, so no
+     * render callback can touch the decoder while the demux threads are still
+     * exiting or the decoder is being freed. */
+    registry_remove(e);
+
+    /* Stop the demux threads so nothing submits while we tear down. Both legs
+     * observe the same running flag; join both before freeing the decoder. */
     e->running = 0;
     thread_join(e);
     audio_thread_join(e);
@@ -1188,6 +1320,11 @@ BASIS_API int BASIS_CALL basis_media_get_state(basis_media_engine_t* e) {
     return s;
 }
 
+BASIS_API int BASIS_CALL basis_media_probe_video_codec(int codec) {
+    if (codec < BASIS_CODEC_H264 || codec > BASIS_CODEC_AV1) return 0;
+    return basis_decoder_probe_video_codec(codec) ? 1 : 0;
+}
+
 BASIS_API int BASIS_CALL basis_media_get_video_size(basis_media_engine_t* e, int* w, int* h) {
     if (!e || !e->decoder) return -1;
     return basis_decoder_get_video_size(e->decoder, w, h);
@@ -1213,15 +1350,22 @@ BASIS_API int BASIS_CALL basis_media_seek_us(basis_media_engine_t* e, int64_t ta
     if (dur <= 0) return -1;                 /* no seekable timeline (live / unindexed) */
     if (target_us > dur) target_us = dur;
     mutex_lock(&e->lock);
+    /* Publish the seek generation before arming the HLS producer below. Both
+     * the byte-source and HLS legs take this generation on their own demux
+     * thread and re-anchor pacing there (take_seek_common), atomically with
+     * dropping their pre-seek buffers: the byte source via a ranged reseek, the
+     * HLS/TS leg on the BASIS_READ_REPOSITION boundary the segment source raises.
+     * Ordering seek_seq ahead of request_seek keeps the producer from signalling
+     * that boundary before the generation is visible. */
     e->seek_target_us = target_us;
     e->seek_seq++;
+    /* Notify the decoder to drop its pre-seek audio/video buffers and re-anchor
+     * the present clock to the target (each leg does it on its own thread). The
+     * demuxer only repositions the byte source; without this the decoder keeps
+     * serving stale buffers — post-seek audio silence and a frozen video clock. */
+    if (e->decoder) basis_decoder_seek(e->decoder, target_us);
     void* hls = e->active_hls;
     int rc = hls ? basis_hls_request_seek(hls, target_us / 1000) : 0;
-    /* HLS repositions inside the segment source — the TS demuxer never sees a
-     * take_seek, so re-anchor pacing here. A stray pre-flush sample can win the
-     * re-anchor, but it costs one more re-anchor when the flushed data lands,
-     * not a stall. */
-    if (hls && rc == 0) e->pace_started = 0;
     mutex_unlock(&e->lock);
     return rc;
 }
@@ -1239,6 +1383,17 @@ BASIS_API int BASIS_CALL basis_media_get_last_error(basis_media_engine_t* e, cha
     int n = (int)strlen(e->error);
     if (n >= buf_size) n = buf_size - 1;
     memcpy(buf, e->error, (size_t)n);
+    buf[n] = 0;
+    mutex_unlock(&e->lock);
+    return n;
+}
+
+BASIS_API int BASIS_CALL basis_media_get_transport(basis_media_engine_t* e, char* buf, int buf_size) {
+    if (!e || !buf || buf_size <= 0) return 0;
+    mutex_lock(&e->lock);
+    int n = (int)strlen(e->transport);
+    if (n >= buf_size) n = buf_size - 1;
+    memcpy(buf, e->transport, (size_t)n);
     buf[n] = 0;
     mutex_unlock(&e->lock);
     return n;

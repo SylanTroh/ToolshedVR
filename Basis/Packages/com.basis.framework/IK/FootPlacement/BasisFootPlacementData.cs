@@ -9,14 +9,36 @@ public struct BasisFootNativeState
     public int phase;
     public float3 plantedPos;
     public quaternion plantedRot;
+    public float3 plantedBodyFwd;   // body forward at plant time — the yaw trigger's reference
     public float3 stepStartPos, stepTargetPos;
-    public quaternion stepTargetRot;
+    /// <summary>Foot rotation at the instant this step began. The swing blends FROM here, exactly as the
+    /// position blends from stepStartPos -- see BasisFootSimulateJob's swing branch for why that matters.</summary>
+    public quaternion stepStartRot;
     public float stepTimer, stepDur;
+    /// <summary>Floor applied to this step's arc-height strideFrac, frozen at commit alongside stepDur.
+    /// A step taken while the body is TURNING travels almost no ground -- a 20 deg re-plant only orbits the
+    /// foot ~4 cm -- so the "a short shuffle barely lifts" scaling reads it as a drift correction and collapses
+    /// the arc to ~0.46x. But a turn step is a real step and a human clears the floor for it. Frozen (not read
+    /// live from the yaw rate) because dynamicHeight must stay CONSTANT across the swing: stepStartPos and
+    /// stepTargetPos are both frozen, so a live term would move the foot's peak height mid-flight and pop it.
+    /// 0 = no floor = the pre-existing behaviour, which is what the sweep/mocap mirrors leave it at.</summary>
+    public float stepArcScale;
+    public float plantedTime;       // seconds since this foot landed; gates the double-support window
 
     public float3 idealPos, filteredNormal;
     public float3 currentPos;
     public quaternion currentRot;
     public float3 kneeHint;
+
+    /// <summary>Toe MTP bend, degrees, from the toe surface probe. Positive = dorsiflexion (toes UP, the foot
+    /// bending over a rise); negative = plantarflexion. 0 when the toe probe found nothing to conform to, which
+    /// includes overhanging an edge -- a toe with no ground under it stays where the animation put it rather than
+    /// reaching into a void. Consumed by the FBIK job's toe stage, NOT by the sim job.</summary>
+    public float toeBendDeg;
+    /// <summary>World medio-lateral axis the toe bends about, built from the body frame rather than the toe bone's
+    /// own axes -- a humanoid toe's local axes are rig-dependent, which is the exact trap that silently disabled
+    /// the yaw trigger and produced the toes-up foot rotation. Zero if the probe was not run this frame.</summary>
+    public float3 toeBendAxis;
 
     // Step trigger output (read by main thread after job)
     public bool wantsStep;
@@ -32,6 +54,8 @@ public struct BasisFootSimState
     public float3 smoothedBodyRight;
     public float3 prevBodyFwd;          // last frame's body forward, for yaw-rate
     public float smoothedYawRateDeg;    // body turn rate (deg/s), paces stepping during turns/spins
+    public float3 prevRootFwd;          // last frame's PLAYER-ROOT forward; lets the body-fwd filter ride the root
+    public bool wasAirborne;            // last frame's airborne flag, so touchdown can be detected as an EDGE
 }
 
 public struct BasisFootSimInput
@@ -104,6 +128,17 @@ public struct BasisFootSimParams
     // Hip bob
     public float hipBobFraction;
 
+    // Foot bone orientation captured IN THE BODY FRAME at calibration (T-pose):
+    //     footAlign = inverse(LookRotation(avatarFwd, avatarUp)) * footBone.rotation
+    // A humanoid foot bone's local axes are NOT the body's -- its +Z may run down the shin or out along the
+    // toes, entirely rig-dependent. So a LookRotation built from the BODY's axes cannot be assigned to the bone
+    // directly; doing that is what came out toes-up and got foot rotation switched off in the first place.
+    // Post-multiplying by footAlign re-expresses the bone in whatever frame we want:
+    //     footWorldRot = targetFrame * footAlign
+    // At rest targetFrame == the rest frame, so this returns EXACTLY the T-pose rotation -- identity by
+    // construction, cannot be toes-up -- and it carries the avatar's natural toe-out along for free.
+    public quaternion footAlignLeft, footAlignRight;
+
     // Calibrated measurements
     public float stanceWidth;
     public float hipToFoot;
@@ -128,4 +163,11 @@ public struct BasisFootSimParams
 public struct BasisFootSimOutput
 {
     public float hipBob;
+    public float3 hipSway;  // lateral COM shift TOWARD the stance leg, as a world offset (already * body-right)
+    public bool airborne;   // ground is out of leg reach; planted feet ride the hips instead of the floor
+
+    // Gait-driven pelvis rotation, as a WORLD delta to pre-multiply onto the hips rotation.
+    // Axial rotation (swing-side hip carried forward) + frontal-plane list (swing-side hip dropped).
+    // Identity when standing still. Only applied when there is NO hip tracker.
+    public quaternion pelvisDelta;
 }

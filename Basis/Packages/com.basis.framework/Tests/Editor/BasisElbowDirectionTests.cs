@@ -1,7 +1,7 @@
 using NUnit.Framework;
 using Unity.Collections;
 using UnityEngine;
-using UnityEngine.Animations.Rigging;
+using Basis.IK;
 
 namespace Basis.Tests.IK
 {
@@ -869,7 +869,7 @@ namespace Basis.Tests.IK
         static BasisArmSolveResult SolveOne(Vector3 shoulder, Vector3 elbow, Vector3 hand,
             Vector3 target, Vector3 hint, bool hintOn, float maxStep, bool hintIsTracker = false)
         {
-            BasisArmSolveInput input;
+            BasisArmSolveInput input = default;
             input.Shoulder = shoulder;
             input.Elbow = elbow;
             input.Hand = hand;

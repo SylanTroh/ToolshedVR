@@ -43,7 +43,7 @@ public partial class BasisLocalFootDriver
     private float rotationLerpSpeed = 16f;
     [Tooltip("Velocity smoothing rate when accelerating.")]
     [SerializeField, Range(1f, 30f)]
-    private float velocitySmoothAccel = 10f;
+    private float velocitySmoothAccel = 25f;
     [Tooltip("Velocity smoothing rate when decelerating.")]
     [SerializeField, Range(10f, 100f)]
     private float velocitySmoothDecel = 50f;
@@ -74,13 +74,13 @@ public partial class BasisLocalFootDriver
     private float footHeightOffsetMul = 0.2f;
     [Tooltip("Step trigger distance as fraction of avg leg length.")]
     [SerializeField, Range(0.02f, 0.2f)]
-    private float stepTriggerMul = 0.08f;
+    private float stepTriggerMul = 0.18f;   // 0.08->0.10->0.18 (foot-vs-real harness): the foot drifts ~0.18*leg behind before stepping, which LENGTHENS the stride toward real (esp. slow/med walk) AND LOWERS over-extension (a further step target strands the foot less: med ext 1.29->1.23). Bounded by the DeriveStepParameters clamp (0.207*leg).
     [Tooltip("Stride scale as fraction of avg leg length.")]
     [SerializeField, Range(0.02f, 0.25f)]
-    private float strideScaleMul = 0.12f;
+    private float strideScaleMul = 0.15f;   // 0.12 -> 0.15: speed-scaled trigger; helps offset the double-support over-extension tail
     [Tooltip("Step height as fraction of avg shin length.")]
     [SerializeField, Range(0.05f, 0.4f)]
-    private float stepHeightMul = 0.18f;
+    private float stepHeightMul = 0.30f;   // 0.18 -> 0.30: measured foot clearance was ~0.09*L vs ~0.16*L in real walkers; 0.30 lands ~0.15*L
     [Tooltip("Slow step duration as fraction of pendulum period.")]
     [SerializeField, Range(0.1f, 0.6f)]
     private float stepDurSlowMul = 0.30f;
@@ -112,9 +112,9 @@ public partial class BasisLocalFootDriver
     [Tooltip("Extra step trigger distance when idle (fraction of stepTriggerDist).")]
     [SerializeField, Range(0.0f, 1.5f)]
     private float idleBoostFraction = 0.5f;
-    [Tooltip("Max yaw between planted foot and body forward before triggering a step (degrees).")]
+    [Tooltip("Max body yaw since plant before triggering a step (degrees). Also sets the yaw rate at which steps go full-fast (fastYawRef = 0.5 * this / stepDurFast).")]
     [SerializeField, Range(10f, 90f)]
-    private float maxPlantedYawDegrees = 35f;
+    private float maxPlantedYawDegrees = 20f;
 
     [Header("Side Enforcement")]
     [Tooltip("Ideal position side enforcement as fraction of half stance.")]
@@ -192,6 +192,10 @@ public partial class BasisLocalFootDriver
     private BasisFootState left;
     private BasisFootState right;
     private float rayCastRange;
+    private Quaternion footAlignLeft = Quaternion.identity;
+    private Quaternion footAlignRight = Quaternion.identity;
+    private Collider _selfCollider;
+    private Transform _selfRoot;
     private Vector3 cachedPlayerUp = Vector3.up;
     private Vector3 cachedPlayerFwd = Vector3.forward;
     private Vector3 cachedPlayerRight = Vector3.right;
@@ -227,12 +231,35 @@ public partial class BasisLocalFootDriver
     {
         var lf = BasisLocalBoneDriver.LeftFootControl.OutgoingWorldData;
         left.currentPos = left.plantedPos = lf.position;
-        left.currentRot = left.plantedRot = lf.rotation;
         left.phase = BasisFootPhase.Planted;
         var rf = BasisLocalBoneDriver.RightFootControl.OutgoingWorldData;
         right.currentPos = right.plantedPos = rf.position;
-        right.currentRot = right.plantedRot = rf.rotation;
         right.phase = BasisFootPhase.Planted;
+
+        // Seed the rotation from the actual FOOT BONE, not from the bone CONTROL.
+        //
+        // OutgoingWorldData is the bone control's rotation, which lives in the TRACKER frame -- that is the whole
+        // reason M_CalibrationLeftFootRotation exists (boneControlRot * offset == boneRot). But plantedRot/currentRot
+        // are now consumed as absolute BONE world rotations (FootRotation() = targetFrame * footAlign produces one,
+        // and the rig driver cancels the calibration offset before handing it to the solve). Seeding them from the
+        // control therefore lands the foot wrong by exactly that offset -- and it STAYS wrong, because only a
+        // landing rewrites plantedRot. Since re-engage happens the moment you stop moving, the foot visibly rotates
+        // to a wrong angle every time you come to a halt.
+        //
+        // The bone's own world rotation is already in the frame everything downstream expects, and it is literally
+        // "where the animation currently has the foot" -- which is what this re-engage snapshot is FOR.
+        // stepStartRot seeded too: a default Quaternion is (0,0,0,0), not identity, and slerping from a
+        // zero quaternion produces garbage. FinalizeStep is the only path into the swing and it always
+        // seeds this -- but seeding it here as well means no future path can reach the job without it.
+        if (left.bone != null) left.currentRot = left.plantedRot = left.stepStartRot = left.bone.rotation;
+        if (right.bone != null) right.currentRot = right.plantedRot = right.stepStartRot = right.bone.rotation;
+
+        // Zero, don't seed: the sim reseeds it from the live body forward on the next tick. These feet
+        // were just picked up from the animation (which is aligned to the body), so "no turn owed" is
+        // the correct starting state. Note plantedRot above is the FOOT BONE's rotation and is only
+        // safe to use for the foot's own orientation -- never as a body-yaw reference.
+        left.plantedBodyFwd = Vector3.zero;
+        right.plantedBodyFwd = Vector3.zero;
 
         // Sync to native state
         if (_nativeFeet.IsCreated)
@@ -241,6 +268,52 @@ public partial class BasisLocalFootDriver
             _nativeFeet[1] = FootStateToNative(right);
         }
     }
+    /// <summary>
+    /// Shifts all world-anchored simulation state by a teleport delta so the feet arrive with the
+    /// player instead of stretching back toward — then visibly stepping across from — the old
+    /// location. Mirror of BasisJiggleRig.Teleport. prevHeadPos is rebased (not zeroed) so the
+    /// head's teleport jump doesn't register as a one-frame velocity spike.
+    /// </summary>
+    public void Teleport(Vector3 delta)
+    {
+        if (!IsInitialized)
+        {
+            return;
+        }
+        if (_jobScheduled)
+        {
+            _jobHandle.Complete();
+            _jobScheduled = false;
+        }
+
+        ShiftFoot(left, delta);
+        ShiftFoot(right, delta);
+
+        if (_nativeFeet.IsCreated)
+        {
+            // Rebuilding from managed state also clears any pending wantsStep/predictedTargetXZ,
+            // which pointed at pre-teleport ground.
+            _nativeFeet[0] = FootStateToNative(left);
+            _nativeFeet[1] = FootStateToNative(right);
+        }
+        if (_nativeSimState.IsCreated)
+        {
+            var sim = _nativeSimState[0];
+            sim.prevHeadPos += (float3)delta;
+            _nativeSimState[0] = sim;
+        }
+    }
+
+    private static void ShiftFoot(BasisFootState f, Vector3 delta)
+    {
+        f.plantedPos += delta;
+        f.currentPos += delta;
+        f.idealPos += delta;
+        f.stepStartPos += delta;
+        f.stepTargetPos += delta;
+        f.kneeHint += delta;
+    }
+
     public Vector3 LeftFootPosition => left.currentPos;
     public Quaternion LeftFootRotation => left.currentRot;
     public Vector3 RightFootPosition => right.currentPos;
@@ -271,6 +344,8 @@ public partial class BasisLocalFootDriver
         left = new BasisFootState("Left", lf, -1);
         right = new BasisFootState("Right", rf, +1);
 
+        CaptureFootAlignment(lf, rf);
+
         left.thigh = mapping.HasLeftUpperLeg ? mapping.LeftUpperLeg : (lf != null ? lf.parent != null ? lf.parent.parent : null : null);
         left.shin = mapping.HasLeftLowerLeg ? mapping.LeftLowerLeg : (lf != null ? lf.parent : null);
         right.thigh = mapping.HasRightUpperLeg ? mapping.RightUpperLeg : (rf != null ? rf.parent != null ? rf.parent.parent : null : null);
@@ -279,6 +354,8 @@ public partial class BasisLocalFootDriver
         // Use the same collision layers as the character controller
         var cc = BasisLocalPlayer.Instance.LocalCharacterDriver.characterController;
         int ccLayer = cc.gameObject.layer;
+        _selfCollider = cc;
+        _selfRoot = BasisLocalPlayer.Instance.transform;
         // Build mask of all layers that collide with the character controller's layer
         int mask = 0;
         for (int Index = 0; Index < 32; Index++)
@@ -310,7 +387,7 @@ public partial class BasisLocalFootDriver
         // Generous margin so the hips-down raycast still finds the floor when the hips sit
         // elevated above leg reach (certain height/scale calibrations); a short range misses
         // and the fallback floats the feet up with the body.
-        rayCastRange = Mathf.Max(hipToFoot + ankleHeight, Mathf.Max(leftLegLen, rightLegLen)) + 1.0f;
+        rayCastRange = Mathf.Max(hipToFoot + ankleHeight, Mathf.Max(leftLegLen, rightLegLen)) * 2.15f;
 
         Matrix4x4 ltw = BasisLocalPlayer.localToWorldMatrix;
         cachedPlayerUp = ltw.MultiplyVector(Vector3.up).normalized;
@@ -379,9 +456,10 @@ public partial class BasisLocalFootDriver
             phase = f.phase == BasisFootPhase.Planted ? 0 : 1,
             plantedPos = f.plantedPos,
             plantedRot = f.plantedRot,
+            plantedBodyFwd = f.plantedBodyFwd,
             stepStartPos = f.stepStartPos,
             stepTargetPos = f.stepTargetPos,
-            stepTargetRot = f.stepTargetRot,
+            stepStartRot = f.stepStartRot,
             stepTimer = f.stepTimer,
             stepDur = f.stepDur,
             idealPos = f.idealPos,
@@ -396,9 +474,10 @@ public partial class BasisLocalFootDriver
     {
         f.plantedPos = n.plantedPos;
         f.plantedRot = n.plantedRot;
+        f.plantedBodyFwd = n.plantedBodyFwd;
         f.stepStartPos = n.stepStartPos;
         f.stepTargetPos = n.stepTargetPos;
-        f.stepTargetRot = n.stepTargetRot;
+        f.stepStartRot = n.stepStartRot;
         f.stepTimer = n.stepTimer;
         f.stepDur = n.stepDur;
         f.idealPos = n.idealPos;
@@ -431,7 +510,11 @@ public partial class BasisLocalFootDriver
             stepArcDropExp = stepArcDropExp,
             stepHeightMinFraction = stepHeightMinFraction,
             stepHeightStrideRefFraction = stepHeightStrideRefFraction,
-            idleSpeedThreshold = idleSpeedThreshold,
+            // Authored in m/s at the reference adult leg (k_RefLeg = 0.87 -> sqrt(g*L) = 2.921), converted
+            // to this avatar's own speed scale. Exactly a no-op at reference size. Unscaled, a small avatar
+            // creeping proportionally slower than 0.05 m/s still read as "moving", lost the idle step-trigger
+            // boost and mince-stepped.
+            idleSpeedThreshold = idleSpeedThreshold * (fastSpeedRef / 2.921f),
             idleBoostFraction = idleBoostFraction,
             maxPlantedYawDegrees = maxPlantedYawDegrees,
             idealSideEnforceFraction = idealSideEnforceFraction,
@@ -454,6 +537,8 @@ public partial class BasisLocalFootDriver
             rightShinLen = rightShinLen,
             footLength = footLength,
             ankleHeight = ankleHeight,
+            footAlignLeft = footAlignLeft,
+            footAlignRight = footAlignRight,
             stepTriggerDist = stepTriggerDist,
             strideScale = strideScale,
             stepHeightCalc = stepHeightCalc,
@@ -467,7 +552,14 @@ public partial class BasisLocalFootDriver
     }
     private void MeasureFromCalibration(BasisTransformMapping mapping)
     {
-        var tpose = mapping.TposeFromRoot;
+        // TposeWorld, not TposeFromRoot. These lengths get multiplied by ScaledToMatchValue and
+        // compared against live world distances, and the avatar root's final scale is
+        // authoredRootScale * ScaledToMatchValue -- TposeFromRoot divides the authored root scale out,
+        // so any avatar whose prefab root is not scale 1 measured short/long by that factor. Short
+        // measurements made mere standing read as airborne (hips beyond straight-leg reach), and the
+        // feet abandoned the ground ray to float on the hips-relative fallback. TposeWorld keeps the
+        // authored scale in, the same convention ScaledToMatchValue is derived against (AvatarEyeHeight).
+        var tpose = mapping.TposeWorld;
         bool hasHips = TryTP(tpose, HumanBodyBones.Hips, out Vector3 tH);
         bool hasLUL = TryTP(tpose, HumanBodyBones.LeftUpperLeg, out Vector3 tLUL);
         bool hasRUL = TryTP(tpose, HumanBodyBones.RightUpperLeg, out Vector3 tRUL);
@@ -555,7 +647,7 @@ public partial class BasisLocalFootDriver
         }
 
         // ── Ankle height (distance from foot bone to ground plane in T-pose) ──
-        // Must be root-independent: TposeFromRoot positions include the root bone's
+        // Must be root-independent: TposeWorld positions include the root bone's
         // offset from ground, which varies wildly between avatar formats.  Using an
         // absolute Y made ankleHeight huge for avatars whose root sits below the
         // ground plane, pushing footHeightOffset to its 0.05 m clamp and lifting
@@ -621,16 +713,24 @@ public partial class BasisLocalFootDriver
         float avgLeg = (leftLegLen + rightLegLen) * 0.5f;
         float avgShin = (leftShinLen + rightShinLen) * 0.5f;
 
-        // Scale the absolute clamp bounds with the avatar so a child / giant gets proportional step
-        // params instead of clipping at human-sized limits (fulfilling "everything scales with the
-        // body"). Lengths scale linearly; gait time & speed scale as sqrt (pendulum / Froude),
-        // matching how pendulum and fastSpeedRef already derive. lengthScale = 1 at calibration.
-        float baseAvgLeg = (baseLeftLegLen + baseRightLegLen) * 0.5f;
-        float lengthScale = baseAvgLeg > 1e-4f ? avgLeg / baseAvgLeg : 1f;
-        float timeScale = Mathf.Sqrt(lengthScale);
+        // Every clamp bound is a FRACTION OF THIS AVATAR'S OWN LEG, not an absolute metre value.
+        //
+        // The old form multiplied the absolute bounds by `lengthScale = avgLeg / baseAvgLeg` -- but baseAvgLeg is
+        // captured at THIS avatar's own calibration, so lengthScale is 1 for every avatar (the comment even said
+        // so). The bounds were therefore raw human-sized metres for a chibi and a giant alike: a 0.30 m-legged
+        // avatar wants a 2.4 cm step trigger and got floored to 4 cm -- 13% of its leg instead of 8% -- so it had
+        // to drift proportionally 65% further before stepping. Same for step height, sphere radius and the
+        // duration floor. That is the "foot IK is bad on small avatars" bug.
+        //
+        // Ratios below are the old absolute values divided by the reference adult leg they were tuned against, so
+        // this is EXACTLY a no-op at reference size and a proportional fix at every other size. Lengths scale with
+        // L; gait TIMES scale as sqrt(L/g) (pendulum) and speeds as sqrt(g*L) (Froude) -- a small avatar must step
+        // faster, not merely shorter.
+        const float k_RefLeg = 0.87f;   // the adult leg length these constants were originally tuned at
+        float pendulum = Mathf.PI * Mathf.Sqrt(avgLeg / 9.81f);
+        float speedRef = Mathf.Sqrt(avgLeg * 9.81f);
 
-        // Ray sphere radius: ~half the foot width, approximated as footLength * 0.3
-        raySphereRadius = Mathf.Clamp(footLength * raySphereRadiusMul, 0.02f * lengthScale, 0.12f * lengthScale);
+        raySphereRadius = Mathf.Clamp(footLength * raySphereRadiusMul, avgLeg * (0.02f / k_RefLeg), avgLeg * (0.12f / k_RefLeg));
 
         // footHeightOffset: how far above the ground raycast hit the IK target sits.
         // For the legs to fully extend when standing, the vertical distance from
@@ -640,19 +740,20 @@ public partial class BasisLocalFootDriver
         //   upperLegToFootVertical + ankleHeight - footHeightOffset >= avgLeg
         float desiredOffset = ankleHeight * footHeightOffsetMul;
         float straightLegLimit = upperLegToFootVertical + ankleHeight - avgLeg;
-        footHeightOffset = Mathf.Clamp(Mathf.Min(desiredOffset, straightLegLimit), 0.001f * lengthScale, 0.05f * lengthScale);
+        footHeightOffset = Mathf.Clamp(Mathf.Min(desiredOffset, straightLegLimit), avgLeg * (0.001f / k_RefLeg), avgLeg * (0.05f / k_RefLeg));
 
-        stepTriggerDist = Mathf.Clamp(avgLeg * stepTriggerMul, 0.04f * lengthScale, 0.18f * lengthScale);
+        stepTriggerDist = Mathf.Clamp(avgLeg * stepTriggerMul, avgLeg * (0.04f / k_RefLeg), avgLeg * (0.18f / k_RefLeg));
 
-        strideScale = Mathf.Clamp(avgLeg * strideScaleMul, 0.02f * lengthScale, 0.22f * lengthScale);
+        strideScale = Mathf.Clamp(avgLeg * strideScaleMul, avgLeg * (0.02f / k_RefLeg), avgLeg * (0.22f / k_RefLeg));
 
-        stepHeightCalc = Mathf.Clamp(avgShin * stepHeightMul, 0.03f * lengthScale, 0.20f * lengthScale);
+        stepHeightCalc = Mathf.Clamp(avgShin * stepHeightMul, avgLeg * (0.03f / k_RefLeg), avgLeg * (0.20f / k_RefLeg));
 
-        float pendulum = Mathf.PI * Mathf.Sqrt(avgLeg / 9.81f);
-        stepDurSlow = Mathf.Clamp(pendulum * stepDurSlowMul, 0.10f * timeScale, 0.30f * timeScale);
-        stepDurFast = Mathf.Clamp(pendulum * stepDurFastMul, 0.06f * timeScale, 0.18f * timeScale);
+        // Reference pendulum at k_RefLeg = pi*sqrt(0.87/9.81) = 0.9356 s; the 0.10/0.30 s bounds are fractions of it.
+        stepDurSlow = Mathf.Clamp(pendulum * stepDurSlowMul, pendulum * (0.10f / 0.9356f), pendulum * (0.30f / 0.9356f));
+        stepDurFast = Mathf.Clamp(pendulum * stepDurFastMul, pendulum * (0.06f / 0.9356f), pendulum * (0.18f / 0.9356f));
 
-        fastSpeedRef = Mathf.Clamp(fastSpeedMul * Mathf.Sqrt(avgLeg * 9.81f), 1.0f * timeScale, 3.5f * timeScale);
+        // Reference sqrt(g*L) at k_RefLeg = 2.921 m/s; the 1.0/3.5 m/s bounds are fractions of it.
+        fastSpeedRef = Mathf.Clamp(fastSpeedMul * speedRef, speedRef * (1.0f / 2.921f), speedRef * 2.5f);
 
         _paramsDirty = true;
     }
@@ -695,7 +796,7 @@ public partial class BasisLocalFootDriver
         // Generous margin so the hips-down raycast still finds the floor when the hips sit
         // elevated above leg reach (certain height/scale calibrations); a short range misses
         // and the fallback floats the feet up with the body.
-        rayCastRange = Mathf.Max(hipToFoot + ankleHeight, Mathf.Max(leftLegLen, rightLegLen)) + 1.0f;
+        rayCastRange = Mathf.Max(hipToFoot + ankleHeight, Mathf.Max(leftLegLen, rightLegLen)) * 2.15f;
         _paramsDirty = true;
 
         // Sync leg lengths to native foot state
@@ -732,8 +833,8 @@ public partial class BasisLocalFootDriver
     {
         if (f.bone == null) return;
 
-        Vector3 origin = f.bone.position + cachedPlayerUp * 0.3f;
-        if (Physics.Raycast(origin, -cachedPlayerUp, out RaycastHit hit, rayCastRange, groundLayers, QueryTriggerInteraction.Ignore))
+        Vector3 origin = f.bone.position + cachedPlayerUp * (hipToFoot * 0.33f);
+        if (GroundCast(origin, -cachedPlayerUp, rayCastRange, 0f, Vector3.Dot(hips.position, cachedPlayerUp), out RaycastHit hit))
         {
             Vector3 snapped = hit.point + hit.normal * footHeightOffset;
             f.currentPos = f.plantedPos = f.idealPos = snapped;
@@ -767,10 +868,22 @@ public partial class BasisLocalFootDriver
         var headData = BasisLocalBoneDriver.HeadControl.OutgoingWorldData;
         var hipsData = BasisLocalBoneDriver.HipsControl.OutgoingWorldData;
         var chestCtrl = BasisLocalBoneDriver.ChestControl;
-        bool groundHit = Physics.Raycast(hips.position, -cachedPlayerUp, out RaycastHit ch, rayCastRange, groundLayers, QueryTriggerInteraction.Ignore);
+        bool groundHit = GroundCast(hips.position, -cachedPlayerUp, rayCastRange, 0f, Vector3.Dot(hips.position, cachedPlayerUp), out RaycastHit ch);
         LastGroundHit = groundHit;
         LastGroundUp = groundHit ? Vector3.Dot(ch.point, cachedPlayerUp) : float.NaN;
         HipsUp = Vector3.Dot(hips.position, cachedPlayerUp);
+
+        // ── 1b. Surface conformance probes (main thread; the Burst sim job cannot raycast) ──
+        // Runs BEFORE the job so the normal it consumes is fresh this frame rather than a frame stale. Uses the
+        // feet's positions as of last frame, which is the same one-frame relationship the ground cast above has.
+        // Planted feet only, so the usual cost is 4 rays (one foot planted mid-walk) to 8 (both planted).
+        if (SurfaceProbesEnabled)
+        {
+            ref BasisFootNativeState leftProbe = ref UnsafeUtility.ArrayElementAsRef<BasisFootNativeState>(_nativeFeet.GetUnsafePtr(), 0);
+            ref BasisFootNativeState rightProbe = ref UnsafeUtility.ArrayElementAsRef<BasisFootNativeState>(_nativeFeet.GetUnsafePtr(), 1);
+            ProbeFootSurface(ref leftProbe, dt);
+            ProbeFootSurface(ref rightProbe, dt);
+        }
 
         // ── 2. Pack input (write in place; no job is in flight here) ──
         ref BasisFootSimInput inputSlot = ref UnsafeUtility.ArrayElementAsRef<BasisFootSimInput>(_nativeInput.GetUnsafePtr(), 0);
@@ -853,25 +966,41 @@ public partial class BasisLocalFootDriver
         float3 velFlat = (float3)ProjectHorizontal(sim.smoothedVelocity);
         float speed = math.length(velFlat);
         float fastYawRef = Mathf.Max(1f, 0.5f * maxPlantedYawDegrees / Mathf.Max(0.01f, stepDurFast));
-        float speedT = Mathf.Max(Mathf.Clamp01(speed / fastSpeedRef), Mathf.Clamp01(Mathf.Abs(sim.smoothedYawRateDeg) / fastYawRef));
+        // MUST mirror BasisFootSimulateJob's urgencyT/yawUrgency -- the job derives the same values to pace the
+        // trigger, and this commits the step. Yaw contributes on the URGENCY reference (k_YawUrgencyRefMul = 5),
+        // not the pacing one, so an ordinary turn no longer forces a minimum-duration flick of a step.
+        float absYawRate = Mathf.Abs(sim.smoothedYawRateDeg);
+        float yawPacing = Mathf.Clamp01(absYawRate / fastYawRef);
+        float yawUrgency = Mathf.Clamp01(absYawRate / (fastYawRef * BasisFootSimulateJob.YawUrgencyRefMul));
+        float urgencyT = Mathf.Max(Mathf.Clamp01(speed / fastSpeedRef), yawUrgency);
 
         f.phase = 1; // Stepping
         f.stepStartPos = f.currentPos;
+        // Freeze the lift-off rotation alongside the lift-off position, so the swing can blend from a
+        // FIXED start instead of chasing its own previous output (which converged by frame count, not
+        // time -- see the swing branch in BasisFootSimulateJob).
+        f.stepStartRot = f.currentRot;
         f.stepTimer = 0f;
-        f.stepDur = Mathf.Lerp(stepDurSlow, stepDurFast, speedT);
+        f.stepDur = Mathf.Lerp(stepDurSlow, stepDurFast, urgencyT);
+        // Freeze this step's arc floor. Scaled by the PACING term (not urgency): the thing that makes a turn step
+        // read as a real step rather than a scuff is that the body is turning at all, which is what yawFrac tracks.
+        f.stepArcScale = BasisFootSimulateJob.TurnStepArcFloor * yawPacing;
 
+        float hipsUpComp = Vector3.Dot(hips.position, cachedPlayerUp);
         Vector3 targetXZ = f.predictedTargetXZ;
         Vector3 rayOrig = targetXZ + cachedPlayerUp * rayCastRange * 0.5f;
-        if (Physics.SphereCast(rayOrig, raySphereRadius, -cachedPlayerUp, out RaycastHit hit, rayCastRange, groundLayers, QueryTriggerInteraction.Ignore))
+        if (GroundCast(rayOrig, -cachedPlayerUp, rayCastRange, raySphereRadius, hipsUpComp, out RaycastHit hit))
         {
             f.stepTargetPos = hit.point + hit.normal * footHeightOffset;
             f.filteredNormal = hit.normal;
         }
         else
         {
-            // Fallback: place foot below hips along player's down direction
-            float hipsUpComp = Vector3.Dot(hips.position, cachedPlayerUp);
-            float targetUpComp = hipsUpComp - hipToFoot;
+            // Fallback: place foot below hips along player's down direction, at the same level a
+            // successful raycast would produce (hipToFoot is the Hips→Foot bone, the ground sits
+            // ankleHeight below that, and raycasted plants carry footHeightOffset) — matching the
+            // sim job's missed-ray fallback so the stepped foot doesn't plant ankleHeight high.
+            float targetUpComp = hipsUpComp - hipToFoot - ankleHeight + footHeightOffset;
             Vector3 targetFlat = ProjectHorizontal(targetXZ);
             f.stepTargetPos = targetFlat + cachedPlayerUp * targetUpComp;
         }
@@ -888,8 +1017,188 @@ public partial class BasisLocalFootDriver
         Vector3 hGround = hipsFlat + cachedPlayerUp * stpUpComp;
         EnforceSide(ref stp, hGround, rawR, f.sideSign, stanceWidth * stepTargetSideFraction);
         f.stepTargetPos = stp;
-        f.stepTargetRot = FootRotation((Vector3)(float3)bodyFwd, (Vector3)(float3)f.filteredNormal);
     }
+    // groundLayers is "every layer that collides with the character controller's layer" -- and a layer
+    // ALWAYS collides with itself unless explicitly ignored, so the CC's own layer is in the mask and
+    // every ground query can hit the player's own capsule. The step SphereCast starts at
+    // target + up * rayCastRange * 0.5 (~1 m up, i.e. INSIDE the capsule), so it either sweeps into the
+    // capsule's side and plants the foot at hip height, or -- when it starts fully overlapped -- takes
+    // Unity's initial-overlap result, which reports distance 0, point (0,0,0) and normal -direction, and
+    // flings the foot to the world origin. That is the leg snapping up to head height.
+    //
+    // Narrowing the mask is not safe (a world may legitimately put geometry on that layer), so reject by
+    // COLLIDER instead: skip anything under the local player, skip the overlap sentinel, and skip any hit
+    // above the pelvis -- a foot can never plant above the hips, on any avatar, at any scale.
+    private static readonly RaycastHit[] s_groundHits = new RaycastHit[8];
+
+    private bool IsSelfCollider(Collider c)
+    {
+        if (c == null) return true;
+        if (_selfCollider != null && c == _selfCollider) return true;
+        return _selfRoot != null && c.transform.IsChildOf(_selfRoot);
+    }
+
+    private bool GroundCast(Vector3 origin, Vector3 dir, float maxDist, float sphereRadius, float maxUpComponent, out RaycastHit best)
+    {
+        best = default;
+        int count = sphereRadius > 0f
+            ? Physics.SphereCastNonAlloc(origin, sphereRadius, dir, s_groundHits, maxDist, groundLayers, QueryTriggerInteraction.Ignore)
+            : Physics.RaycastNonAlloc(origin, dir, s_groundHits, maxDist, groundLayers, QueryTriggerInteraction.Ignore);
+
+        bool found = false;
+        float bestDist = float.MaxValue;
+        for (int Index = 0; Index < count; Index++)
+        {
+            RaycastHit h = s_groundHits[Index];
+            // distance 0 == the sweep began already overlapping this collider; point/normal are unusable.
+            if (h.distance <= 0f) continue;
+            if (IsSelfCollider(h.collider)) continue;
+            if (Vector3.Dot(h.point, cachedPlayerUp) > maxUpComponent) continue;
+            if (h.distance >= bestDist) continue;   // NonAlloc does not sort
+            bestDist = h.distance;
+            best = h;
+            found = true;
+        }
+        return found;
+    }
+
+    // ── SURFACE CONFORMANCE PROBES ──────────────────────────────────────────────────────────────────────────
+    /// <summary>Kill switch for the per-foot surface probes and the toe articulation they drive, mirroring the
+    /// FootRotationFromDriver switch in BasisLocalRigDriver. False restores the previous behaviour exactly: the
+    /// normal then only updates at plant/re-snap/init and the toe stays under animation control.</summary>
+    public static bool SurfaceProbesEnabled = true;
+
+    // Sample offsets along the foot, as fractions of the calibrated footLength (ANKLE bone -> TOE bone, so the
+    // heel projects BEHIND the origin and the toe tip extends past the toe bone). Fractions, so they scale.
+    private const float k_HeelProbeFrac = 0.45f;   // behind the ankle
+    private const float k_BallProbeFrac = 0.85f;   // just behind the MTP joint -- still the RIGID part of the foot
+    private const float k_ToeProbeFrac = 1.30f;    // the toe tip, ahead of the MTP joint
+    private const float k_FootHalfWidthFrac = 0.28f;
+    // MTP range of motion. Extension (toes up) is the large one -- that is the toe-off direction and a real MTP
+    // reaches 60-70 deg; flexion is much smaller. Kept well inside the anatomical limit: this is surface
+    // conformance, not a push-off pose.
+    private const float k_ToeMaxDorsiDeg = 40f;
+    private const float k_ToeMaxPlantarDeg = 15f;
+    private const float k_ToeBendRate = 12f;       // exponential approach, so a stair edge eases instead of snapping
+    private const float k_SurfaceNormalRate = 14f;
+
+    /// <summary>
+    /// Conform one PLANTED foot to the surface under it: four downward probes (heel, two at the ball, one at the
+    /// toe tip) give a fitted ground plane for the foot's pitch and roll, plus a separate toe-tip sample that
+    /// articulates the toe over a break in the surface.
+    ///
+    /// Why this exists: filteredNormal was written at exactly three places -- plant, re-snap and init -- so a
+    /// PLANTED foot never re-sampled the ground. Walk onto a slope and the foot kept whatever normal it happened
+    /// to plant with; the alignment machinery in BuildFootFrame/FootRotation was fully built but starved.
+    ///
+    /// The plane is fitted from HEEL->BALL only, deliberately excluding the toe: the toe is the part that is
+    /// allowed to articulate, so including it would let a rise under the toe tilt the whole rigid foot instead
+    /// of bending the joint that exists for it.
+    /// </summary>
+    private void ProbeFootSurface(ref BasisFootNativeState f, float dt)
+    {
+        // Only planted feet conform. A swinging foot's landing normal already comes from FinalizeStep's
+        // spherecast at the step target; probing under a foot in mid-air samples whatever it is passing over.
+        if (f.phase != 0 || footLength <= 0f)
+        {
+            f.toeBendDeg = Mathf.MoveTowards(f.toeBendDeg, 0f, k_ToeMaxDorsiDeg * dt * 4f);
+            return;
+        }
+
+        // Foot frame from the BODY, never from the foot bone. A humanoid foot bone's local axes are
+        // rig-dependent -- that is precisely what silently disabled the yaw trigger (it compared against the
+        // bone's local +Z) and what made the first foot-rotation attempt come out toes-up.
+        Vector3 fwd = ProjectHorizontal((Vector3)f.plantedBodyFwd);
+        if (fwd.sqrMagnitude < 1e-6f) fwd = ProjectHorizontal(cachedPlayerFwd);
+        if (fwd.sqrMagnitude < 1e-6f) return;
+        fwd.Normalize();
+        Vector3 right = Vector3.Cross(cachedPlayerUp, fwd);
+        if (right.sqrMagnitude < 1e-6f) return;
+        right.Normalize();
+
+        Vector3 c = (Vector3)f.currentPos;
+        float hipsUpComp = Vector3.Dot(hips.position, cachedPlayerUp);
+        float heelD = footLength * k_HeelProbeFrac;
+        float ballD = footLength * k_BallProbeFrac;
+        float toeD = footLength * k_ToeProbeFrac;
+        float halfW = footLength * k_FootHalfWidthFrac;
+
+        bool okHeel = ProbeGroundHeight(c - fwd * heelD, hipsUpComp, out float heelH);
+        bool okA = ProbeGroundHeight(c + fwd * ballD + right * halfW, hipsUpComp, out float ballAH);
+        bool okB = ProbeGroundHeight(c + fwd * ballD - right * halfW, hipsUpComp, out float ballBH);
+        bool okToe = ProbeGroundHeight(c + fwd * toeD, hipsUpComp, out float toeH);
+
+        // ── Plane -> normal ──
+        if (okHeel && okA && okB)
+        {
+            float ballH = (ballAH + ballBH) * 0.5f;
+            // Tangents along the two foot axes, following the sampled ground. cross(fwd, right) is +up for a
+            // flat surface in Unity's left-handed frame; the dot guard covers a degenerate/inverted fit.
+            Vector3 tFwd = fwd * (heelD + ballD) + cachedPlayerUp * (ballH - heelH);
+            Vector3 tRight = right * (2f * halfW) + cachedPlayerUp * (ballAH - ballBH);
+            Vector3 n = Vector3.Cross(tFwd, tRight);
+            if (n.sqrMagnitude > 1e-8f)
+            {
+                n.Normalize();
+                if (Vector3.Dot(n, cachedPlayerUp) < 0f) n = -n;
+                // A WORLD-SPACE exponential filter is CORRECT here, unlike the body-forward and knee-swivel
+                // filters this codebase has twice had to fix. Those smoothed quantities that rotate rigidly with
+                // the player root, so a deliberate turn registered as filter error. A ground normal does not
+                // rotate with the body at all -- it is a property of the world -- so there is nothing to carry.
+                Vector3 prev = (Vector3)f.filteredNormal;
+                if (prev.sqrMagnitude < 1e-6f) prev = cachedPlayerUp;
+                f.filteredNormal = Vector3.Slerp(prev, n, 1f - Mathf.Exp(-k_SurfaceNormalRate * dt)).normalized;
+            }
+
+            // ── Toe articulation ──
+            // Extrapolate the heel->ball plane out to the toe tip and compare it against what is actually there.
+            // A rise under the toe (stair nose, ramp, kerb) means the toe must dorsiflex to lie on it.
+            float span = Mathf.Max(1e-3f, heelD + ballD);
+            float expectedToeH = ballH + (ballH - heelH) / span * (toeD - ballD);
+            float toeDelta = toeH - expectedToeH;
+            // A hit far BELOW the foot plane is not a surface the toe can rest on -- it is the bottom of a
+            // stairwell or a drop the foot is overhanging. Without this the toe would hold a permanent
+            // plantarflexion (whatever the clamp allows) reaching for a floor it is nowhere near touching.
+            // Only the downward direction needs the guard: a hit far ABOVE is a riser, which is real contact.
+            bool toeHasSurface = okToe && toeDelta > -footLength * 0.5f;
+            if (toeHasSurface)
+            {
+                float bend = Mathf.Atan2(toeDelta, Mathf.Max(1e-3f, toeD - ballD)) * Mathf.Rad2Deg;
+                bend = Mathf.Clamp(bend, -k_ToeMaxPlantarDeg, k_ToeMaxDorsiDeg);
+                f.toeBendDeg = Mathf.Lerp(f.toeBendDeg, bend, 1f - Mathf.Exp(-k_ToeBendRate * dt));
+            }
+            else
+            {
+                // Nothing under the toe: overhanging an edge or a gap. Relax to neutral -- a toe with no ground
+                // beneath it should stay where the animation put it, not reach down into a void.
+                f.toeBendDeg = Mathf.Lerp(f.toeBendDeg, 0f, 1f - Mathf.Exp(-k_ToeBendRate * dt));
+            }
+            // Positive toeBendDeg means DORSIFLEXION (toes up). A positive AngleAxis about world-right pitches
+            // forward-to-down in Unity's left-handed frame, so the consumer negates -- see BasisFullBodyIK.
+            f.toeBendAxis = right;
+        }
+        else
+        {
+            f.toeBendDeg = Mathf.Lerp(f.toeBendDeg, 0f, 1f - Mathf.Exp(-k_ToeBendRate * dt));
+        }
+    }
+
+    /// <summary>One downward surface probe. Returns the hit's height along the player's up axis.</summary>
+    private bool ProbeGroundHeight(Vector3 at, float hipsUpComp, out float height)
+    {
+        // Same origin convention as FinalizeStep: start half the ray range above so a step riser cannot be
+        // stepped over, and reuse GroundCast so self-colliders, the distance==0 overlap sentinel and
+        // above-the-pelvis hits are all rejected identically.
+        Vector3 origin = at + cachedPlayerUp * (rayCastRange * 0.5f);
+        if (GroundCast(origin, -cachedPlayerUp, rayCastRange, 0f, hipsUpComp, out RaycastHit hit))
+        {
+            height = Vector3.Dot(hit.point, cachedPlayerUp);
+            return true;
+        }
+        height = 0f;
+        return false;
+    }
+
     /// <summary>Projects a vector onto the player's horizontal plane (removes up component).</summary>
     private Vector3 ProjectHorizontal(Vector3 v)
     {
@@ -984,18 +1293,50 @@ public partial class BasisLocalFootDriver
     }
 
     /// <summary>
+    /// Capture each foot bone's orientation IN THE BODY FRAME, once, at avatar init.
+    ///
+    /// This is the fix for the long-standing "foot rotation comes out toes-up", which is why foot rotation was
+    /// switched off (the zero-quaternion sentinel) in the first place. FootRotation() builds a frame out of the
+    /// BODY's axes (+Z body-forward, +Y surface normal) -- but a humanoid foot bone's local axes are rig-dependent
+    /// and are NOT the body's, so assigning that frame straight onto the bone tips the foot into a garbage pose.
+    ///
+    /// Measuring the bone against the body frame instead gives a per-rig correction:
+    ///     footAlign  = inverse(restFrame) * footBone.rotation
+    ///     footWorld  = targetFrame * footAlign
+    /// Both sides are taken from LIVE world transforms, so the spaces cannot disagree. And at rest the target
+    /// frame IS the rest frame, so this reproduces footBone.rotation EXACTLY -- toes-up is impossible by
+    /// construction, and the avatar's natural toe-out is preserved rather than clamped away.
+    /// </summary>
+    private void CaptureFootAlignment(Transform lf, Transform rf)
+    {
+        footAlignLeft = Quaternion.identity;
+        footAlignRight = Quaternion.identity;
+        if (avatarTransform == null) return;
+
+        Quaternion restFrame = BuildFootFrame(avatarTransform.forward, avatarTransform.up, avatarTransform.up);
+        Quaternion invRest = Quaternion.Inverse(restFrame);
+
+        if (lf != null) footAlignLeft = invRest * lf.rotation;
+        if (rf != null) footAlignRight = invRest * rf.rotation;
+    }
+
+    /// <summary>
     /// Compute foot rotation from body forward + surface normal, clamped to human limits:
     /// - Tilt (roll/pitch from slope) clamped to maxFootTiltDegrees
     /// - Yaw (toe-out/toe-in from body forward) clamped to maxFootYawDegrees
     /// </summary>
-    private Quaternion FootRotation(Vector3 bodyFwd, Vector3 normal)
+    /// <summary>
+    /// The body-derived foot frame, shared by CaptureFootAlignment and FootRotation so the rest
+    /// identity (targetFrame == restFrame => footWorld == footBone.rotation) holds by construction
+    /// for any avatar orientation, not just perfectly upright on flat ground.
+    /// </summary>
+    private Quaternion BuildFootFrame(Vector3 bodyFwd, Vector3 normal, Vector3 up)
     {
         if (normal.sqrMagnitude < 0.001f)
         {
-            normal = cachedPlayerUp;
+            normal = up;
         }
 
-        // Project body forward onto surface plane for the foot's forward direction
         Vector3 fwd = Vector3.ProjectOnPlane(bodyFwd, normal);
         if (fwd.sqrMagnitude < 1e-6f)
         {
@@ -1004,11 +1345,22 @@ public partial class BasisLocalFootDriver
 
         fwd.Normalize();
 
-        // Clamp tilt: blend between upright and surface-aligned
         Quaternion surfaceRot = Quaternion.LookRotation(fwd, normal);
-        Quaternion uprightRot = Quaternion.LookRotation(fwd, cachedPlayerUp);
+        Quaternion uprightRot = Quaternion.LookRotation(fwd, up);
         float tiltAngle = Quaternion.Angle(uprightRot, surfaceRot);
-        Quaternion result = tiltAngle > 0.01f ? Quaternion.Slerp(uprightRot, surfaceRot, Mathf.Clamp01(maxFootTiltDegrees / tiltAngle)) : uprightRot;
+        return tiltAngle > 0.01f
+            ? Quaternion.Slerp(uprightRot, surfaceRot, Mathf.Clamp01(maxFootTiltDegrees / tiltAngle))
+            : uprightRot;
+    }
+
+    private Quaternion FootRotation(Vector3 bodyFwd, Vector3 normal, Quaternion footAlign)
+    {
+        if (normal.sqrMagnitude < 0.001f)
+        {
+            normal = cachedPlayerUp;
+        }
+
+        Quaternion result = BuildFootFrame(bodyFwd, normal, cachedPlayerUp);
 
         // Clamp yaw: how far the foot forward deviates from body forward projected onto the player's horizontal plane
         Vector3 footFwd = result * Vector3.forward;
@@ -1029,7 +1381,7 @@ public partial class BasisLocalFootDriver
             }
         }
 
-        return result;
+        return result * footAlign;
     }
     private static bool TryTP(System.Collections.Generic.Dictionary<HumanBodyBones, BasisCalibratedCoords> tp, HumanBodyBones b, out Vector3 p)
     {
@@ -1091,7 +1443,7 @@ public partial class BasisLocalFootDriver
         }
 
         Vector3 bp = f.bone.position;
-        if (Physics.Raycast(bp + cachedPlayerUp * 0.3f, -cachedPlayerUp, out RaycastHit hit, rayCastRange, groundLayers, QueryTriggerInteraction.Ignore))
+        if (GroundCast(bp + cachedPlayerUp * (hipToFoot * 0.33f), -cachedPlayerUp, rayCastRange, 0f, Vector3.Dot(hips.position, cachedPlayerUp), out RaycastHit hit))
         {
             f.currentPos = f.plantedPos = f.idealPos = hit.point + hit.normal * footHeightOffset;
             f.filteredNormal = hit.normal;
@@ -1102,20 +1454,52 @@ public partial class BasisLocalFootDriver
             f.filteredNormal = cachedPlayerUp;
         }
         Vector3 fwd = avatarTransform != null ? avatarTransform.forward : Vector3.forward;
-        f.currentRot = f.plantedRot = FootRotation(fwd, f.filteredNormal);
+        f.currentRot = f.plantedRot = f.stepStartRot = FootRotation(fwd, f.filteredNormal, f.sideSign < 0 ? footAlignLeft : footAlignRight);
         f.phase = BasisFootPhase.Planted;
         f.kneeHint = (hips.position + f.currentPos) * 0.5f + fwd * (f.thighLen > 0 ? f.thighLen * 0.4f : 0.12f);
     }
     /// <summary>
-    /// Returns a vertical hip offset for natural walk bob. Dips when a foot is mid-step
-    /// (weight transfer) and rises when both feet are planted. Amplitude scales with
-    /// avatar leg length and current speed.
+    /// Vertical hip offset for the walk bob. RISES at mid-swing -- mid-swing of one leg is mid-STANCE of the
+    /// other, and a human's COM is at its highest there (you vault over the straight stance leg); it is lowest
+    /// at double support, where both legs are splayed. Scales with the avatar's leg and current speed.
     /// </summary>
     public float ComputeHipBob()
     {
         if (!IsInitialized || !_nativeOutput.IsCreated) return 0f;
         return _nativeOutput[0].hipBob;
     }
+
+    /// <summary>
+    /// Lateral hip offset (signed, along body-right) for the walk sway. A human rocks the pelvis OVER the loaded
+    /// leg each step rather than tracking a straight rail; with no sway the walk reads as a glide.
+    /// </summary>
+    public Vector3 ComputeHipSway()
+    {
+        if (!IsInitialized || !_nativeOutput.IsCreated) return Vector3.zero;
+        return _nativeOutput[0].hipSway;
+    }
+
+    /// <summary>
+    /// Gait-driven pelvis rotation (world delta, pre-multiply onto the hips rotation): the swing-side hip is
+    /// carried forward and dropped. Identity when standing. Only valid to apply when there is NO hip tracker.
+    /// </summary>
+    public Quaternion ComputePelvisDelta()
+    {
+        if (!IsInitialized || !_nativeOutput.IsCreated) return Quaternion.identity;
+        return _nativeOutput[0].pelvisDelta;
+    }
+
+    /// <summary>Toe MTP bend in degrees from the surface probes; positive = dorsiflexion (toes up). Read straight
+    /// from native state rather than the managed mirror so it costs nothing to expose.</summary>
+    public unsafe float LeftToeBendDegrees => IsInitialized && _nativeFeet.IsCreated
+        ? UnsafeUtility.ArrayElementAsRef<BasisFootNativeState>(_nativeFeet.GetUnsafePtr(), 0).toeBendDeg : 0f;
+    public unsafe float RightToeBendDegrees => IsInitialized && _nativeFeet.IsCreated
+        ? UnsafeUtility.ArrayElementAsRef<BasisFootNativeState>(_nativeFeet.GetUnsafePtr(), 1).toeBendDeg : 0f;
+    /// <summary>World medio-lateral axis for the corresponding bend. Zero when no probe ran.</summary>
+    public unsafe Vector3 LeftToeBendAxis => IsInitialized && _nativeFeet.IsCreated
+        ? (Vector3)UnsafeUtility.ArrayElementAsRef<BasisFootNativeState>(_nativeFeet.GetUnsafePtr(), 0).toeBendAxis : Vector3.zero;
+    public unsafe Vector3 RightToeBendAxis => IsInitialized && _nativeFeet.IsCreated
+        ? (Vector3)UnsafeUtility.ArrayElementAsRef<BasisFootNativeState>(_nativeFeet.GetUnsafePtr(), 1).toeBendAxis : Vector3.zero;
 
     public bool LeftIsPlanted => left.phase == BasisFootPhase.Planted;
     public bool RightIsPlanted =>  right.phase == BasisFootPhase.Planted;

@@ -8,6 +8,9 @@
  * support is planned (it needs a non-Windows http provider). */
 
 #include "basis_hls.h"
+#include "../basis_media_internal.h"  /* BASIS_READ_REPOSITION */
+#include "basis_io.h"                 /* basis_io_host_is_blocked (SSRF guard) */
+#include "basis_url.h"                /* basis_url_parse */
 
 #include <stdlib.h>
 #include <string.h>
@@ -53,7 +56,11 @@ static void hls_mutex_unlock(hls_mutex_t* m)  { pthread_mutex_unlock(m); }
 #define HLS_MAX_PLAYLIST   (1 << 20) /* 1 MiB playlist cap                         */
 #define HLS_MAX_EMPTY_RELOADS 8  /* consecutive no-new-media reloads before giving up */
 #define HLS_LIVE_MARGIN_SEGMENTS 3 /* playout buffer kept behind the live edge for plain (non-LL) HLS */
-#define HLS_RING_CAP (4 * 1024 * 1024) /* read-ahead byte buffer (~5 s of 1080p HD) */
+/* Read-ahead byte buffer (~5 s of 1080p HD). Kept small on purpose: a larger
+ * read-ahead makes the VOD producer reach the end of the playlist further ahead
+ * of playout, which widens the window where a seek is rejected outright (the
+ * producer_done path). One heap allocation per HLS stream. */
+#define HLS_RING_CAP (4 * 1024 * 1024)
 
 /* (msn, part) media position. part == -1 means a whole segment. */
 typedef struct {
@@ -102,6 +109,16 @@ typedef struct basis_hls {
     int   vod_count;
     volatile int  seek_pending;  /* producer repositions at its next iteration */
     volatile long seek_target_ms;
+    /* Seek-boundary handshake with the consumer. request_seek bumps seek_gen
+     * (single writer: the seek caller); the producer sets flush_gen to match
+     * once it has flushed the ring and requeued at the target (single writer:
+     * the producer). While seek_gen != flush_gen the ring holds pre-seek bytes,
+     * so basis_hls_read withholds them; when they match it raises
+     * BASIS_READ_REPOSITION once (tracked by read_signaled_gen, consumer-only)
+     * so the demuxer flushes and re-anchors at the exact boundary. */
+    volatile long seek_gen;
+    volatile long flush_gen;
+    long          read_signaled_gen;
 
     int  map_served;             /* fMP4: init segment already streamed once */
     char map_uri[HLS_MAX_URI];
@@ -224,11 +241,36 @@ static void resolve_url(const char* base, const char* ref, char* out, int outsz)
 
 /* ---- playlist fetch ------------------------------------------------------ */
 
+/* SSRF gate for every URL a playlist steers us to. The managed layer validates
+ * only the entry URL; variant/segment/map URIs come from the (attacker-controlled)
+ * playlist body and are followed here, so re-check each one: it must stay on
+ * http(s) and its host must not resolve to a non-global-unicast address. The
+ * platform HTTP stacks (WinHTTP / JNI) don't apply this guard themselves.
+ *
+ * This is a pre-check: it blocks literal internal addresses and hosts that resolve
+ * private. It does NOT close two provider-side bypasses — active DNS rebinding (the
+ * platform stack re-resolves the name when it connects) and an allowed URL that
+ * redirects to an internal host (WinHTTP/JNI follow redirects). Fully closing those
+ * needs connect-by-pinned-IP plus per-redirect re-validation and connected-peer
+ * verification at the HTTP-provider boundary — tracked as a follow-up. */
+/* out_blocked (nullable) distinguishes a deterministic policy rejection (bad
+ * scheme/host — retrying can never succeed) from a transient provider open
+ * failure, so a caller can terminate on the former instead of busy-looping. */
+static void* hls_guarded_open(basis_hls_t* h, const char* url, int* out_blocked) {
+    if (out_blocked) *out_blocked = 1;   /* set for the policy-reject early returns */
+    basis_url_t u;
+    if (basis_url_parse(url, &u) != 0) return NULL;
+    if (strcmp(u.scheme, "http") != 0 && strcmp(u.scheme, "https") != 0) return NULL;
+    if (basis_io_host_is_blocked(u.host)) return NULL;
+    if (out_blocked) *out_blocked = 0;   /* passed policy; any NULL below is transient */
+    return h->http.open(url);
+}
+
 /* GET `url` fully into a NUL-terminated buffer (caller frees). Returns length,
  * or <0 on error / stop. */
-static int fetch_text(basis_hls_t* h, const char* url, char** out) {
+static int fetch_text(basis_hls_t* h, const char* url, char** out, int* out_blocked) {
     *out = NULL;
-    void* ctx = h->http.open(url);
+    void* ctx = hls_guarded_open(h, url, out_blocked);
     if (!ctx) return -1;
 
     int cap = 16384, len = 0;
@@ -464,8 +506,9 @@ static int reload_and_enqueue(basis_hls_t* h) {
     }
 
     char* text = NULL;
-    int n = fetch_text(h, url, &text);
-    if (n < 0) { free(text); return -1; }
+    int blocked = 0;
+    int n = fetch_text(h, url, &text, &blocked);
+    if (n < 0) { free(text); return blocked ? -2 : -1; } /* -2 = policy-blocked (deterministic) */
 
     hls_playlist_t pl;
     parse_media_playlist(h->media_url, text, &pl);
@@ -490,6 +533,12 @@ static void ring_write(basis_hls_t* h, const uint8_t* data, int n) {
     int written = 0;
     while (written < n && hls_should_run(h)) {
         hls_mutex_lock(&h->lock);
+        /* Stop filling the moment a seek is requested: the bytes queued here are
+         * pre-seek and about to be flushed, and the consumer withholds the ring
+         * while the seek is in flight, so a full ring here would otherwise wedge
+         * the producer against a consumer that has stopped draining. The producer
+         * picks the seek up at the top of its next loop. */
+        if (h->seek_pending) { hls_mutex_unlock(&h->lock); break; }
         int space = h->ring_cap - h->ring_count;
         if (space > 0) {
             int chunk = n - written;
@@ -515,45 +564,80 @@ static void ring_write(basis_hls_t* h, const uint8_t* data, int n) {
 static void hls_producer(basis_hls_t* h) {
     uint8_t tmp[16384];
     while (hls_should_run(h)) {
-        if (h->seek_pending) {
+        /* Take the seek request under the lock so the pending flag, target and
+         * generation read as one consistent snapshot. Only accept it when the VOD
+         * segment list is present (the only seekable case) — clearing the flag
+         * without flushing would strand the reader withholding the ring. */
+        hls_mutex_lock(&h->lock);
+        int do_seek = h->seek_pending && h->vod_count > 0;
+        long seek_target = h->seek_target_ms;
+        long seek_g = h->seek_gen;
+        if (do_seek) h->seek_pending = 0;
+        hls_mutex_unlock(&h->lock);
+        if (do_seek) {
             /* Reposition: drop the current segment, rebuild the queue from the
              * segment containing the target, flush buffered bytes. The consumer
-             * may hold a partial TS packet from before the jump — the TS
-             * demuxer resynchronises on the 0x47 sync byte. */
-            h->seek_pending = 0;
-            if (h->vod_count > 0) {
-                if (h->seg_ctx) { h->http.close(h->seg_ctx); h->seg_ctx = NULL; }
-                long acc = 0;
-                int idx = 0;
-                for (; idx < h->vod_count - 1; ++idx) {
-                    if (acc + h->vod_dur_ms[idx] > h->seek_target_ms) break;
-                    acc += h->vod_dur_ms[idx];
-                }
-                h->pending_head = 0;
-                h->pending_count = 0;
-                for (int i = idx; i < h->vod_count; ++i)
-                    queue_push(h, h->vod_uri[i], h->vod_dur_ms[i]);
-                hls_mutex_lock(&h->lock);
-                h->ring_head = h->ring_tail = h->ring_count = 0;
-                hls_mutex_unlock(&h->lock);
+             * may hold a partial TS packet from before the jump; the TS demuxer
+             * resynchronises on the 0x47 sync byte. */
+            if (h->seg_ctx) { h->http.close(h->seg_ctx); h->seg_ctx = NULL; }
+            long acc = 0;
+            int idx = 0;
+            for (; idx < h->vod_count - 1; ++idx) {
+                if (acc + h->vod_dur_ms[idx] > seek_target) break;
+                acc += h->vod_dur_ms[idx];
             }
+            h->pending_head = 0;
+            h->pending_count = 0;
+            for (int i = idx; i < h->vod_count; ++i)
+                queue_push(h, h->vod_uri[i], h->vod_dur_ms[i]);
+            hls_mutex_lock(&h->lock);
+            h->ring_head = h->ring_tail = h->ring_count = 0;
+            /* Publish the flush for the snapshot generation under the same lock
+             * as the ring clear, so a consumer that acquires it sees an emptied
+             * ring and the matched generation together; its next serve is
+             * guaranteed post-seek. */
+            h->flush_gen = seek_g;
+            hls_mutex_unlock(&h->lock);
         }
         if (!h->seg_ctx) {
             if (h->is_fmp4 && !h->map_served && h->map_uri[0]) {
-                h->seg_ctx = h->http.open(h->map_uri); /* fMP4 init segment first */
+                int blocked = 0;
+                h->seg_ctx = hls_guarded_open(h, h->map_uri, &blocked); /* fMP4 init segment first */
+                if (!h->seg_ctx) {
+                    /* A policy-blocked map can never load and its fragments are
+                     * useless without it, so stop instead of spinning; a transient
+                     * open failure backs off and retries. */
+                    if (blocked) break;
+                    if (!hls_should_run(h)) break;
+                    hls_sleep_ms(50);
+                    continue;
+                }
                 h->map_served = 1;
-                if (!h->seg_ctx) continue;
             } else {
                 const char* next = queue_pop(h, NULL);
                 if (next) {
-                    h->seg_ctx = h->http.open(next);
-                    if (!h->seg_ctx) continue; /* skip a transient open failure */
+                    int blocked = 0;
+                    h->seg_ctx = hls_guarded_open(h, next, &blocked);
+                    if (!h->seg_ctx) {
+                        if (blocked) break;    /* policy-blocked (SSRF): fail playback deterministically */
+                        continue;              /* transient: skip; the next pop advances */
+                    }
                     h->empty_reloads = 0;
                 } else if (h->endlist_seen) {
+                    /* VOD exhausted. Arbitrate against a late seek under the lock:
+                     * either honour a pending request (loop back) or mark the
+                     * producer done so basis_hls_request_seek rejects further
+                     * seeks. The two can't interleave, so no request is lost and
+                     * the reader never withholds on a flush that never comes. */
+                    hls_mutex_lock(&h->lock);
+                    if (h->seek_pending) { hls_mutex_unlock(&h->lock); continue; }
+                    h->producer_done = 1;
+                    hls_mutex_unlock(&h->lock);
                     break; /* VOD / stream finished */
                 } else {
                     int r = reload_and_enqueue(h);
                     if (r > 0) { h->empty_reloads = 0; }
+                    else if (r == -2) break; /* playlist policy-blocked: retrying can't recover */
                     else if (r < 0) {
                         if (!hls_should_run(h)) break;
                         hls_sleep_ms(50); /* transient fetch error — back off and retry */
@@ -580,7 +664,12 @@ static void hls_producer(basis_hls_t* h) {
                 reload_and_enqueue(h);
         }
     }
+    /* Publish under the lock so basis_hls_read and basis_hls_request_seek see a
+     * consistent producer_done (the endlist path already set it under the lock
+     * to arbitrate against a late seek; this covers the stop/exhaustion exits). */
+    hls_mutex_lock(&h->lock);
     h->producer_done = 1;
+    hls_mutex_unlock(&h->lock);
 }
 
 #if defined(_WIN32)
@@ -623,14 +712,14 @@ void* basis_hls_open(const char* url, const basis_http_provider_t* http,
 
     /* Fetch the entry playlist; follow one master->media indirection. */
     char* text = NULL;
-    if (fetch_text(h, url, &text) < 0 || !text) { free(text); free(h); return NULL; }
+    if (fetch_text(h, url, &text, NULL) < 0 || !text) { free(text); free(h); return NULL; }
 
     if (playlist_is_master(text)) {
         char media[HLS_MAX_URI];
         if (!master_pick_variant(h, url, text, media, sizeof(media))) { free(text); free(h); return NULL; }
         snprintf(h->media_url, sizeof(h->media_url), "%s", media);
         free(text);
-        if (fetch_text(h, h->media_url, &text) < 0 || !text) { free(text); free(h); return NULL; }
+        if (fetch_text(h, h->media_url, &text, NULL) < 0 || !text) { free(text); free(h); return NULL; }
     } else {
         snprintf(h->media_url, sizeof(h->media_url), "%s", url);
     }
@@ -700,11 +789,13 @@ void* basis_hls_open(const char* url, const basis_http_provider_t* http,
     /* Start the read-ahead producer so segments buffer ahead of playout. */
     h->ring_cap = HLS_RING_CAP;
     h->ring = (uint8_t*)malloc((size_t)h->ring_cap);
-    if (!h->ring) { free(h); return NULL; }
+    if (!h->ring) { free(h->vod_uri); free(h->vod_dur_ms); free(h); return NULL; }
     hls_mutex_init(&h->lock);
     if (!hls_thread_start(h)) {
         hls_mutex_destroy(&h->lock);
         free(h->ring);
+        free(h->vod_uri);
+        free(h->vod_dur_ms);
         free(h);
         return NULL;
     }
@@ -723,8 +814,31 @@ int basis_hls_read(void* ctx, uint8_t* buf, int len) {
 
         /* No metering here: the engine paces delivery by AU timestamp (pace_gate),
          * holding the demux thread on submit, so serving the ring as fast as the
-         * demuxer pulls can't flood the decoder. */
+         * demuxer pulls can't flood the decoder. The seek generations are read
+         * under the same lock that guards the ring, so the boundary stays
+         * consistent with the flushed ring state (volatile orders nothing across
+         * threads on its own). */
         hls_mutex_lock(&h->lock);
+        /* Seek in flight: the ring still holds pre-seek bytes until the producer
+         * flushes and requeues at the target. Withhold them, since handing them
+         * to the demuxer would let a stale AU re-anchor pacing to the old timeline.
+         * If the producer has already exited (VOD genuinely ended) without
+         * honouring the seek, stop waiting for a flush that will never come. */
+        if (h->seek_gen != h->flush_gen) {
+            int done = h->producer_done;
+            hls_mutex_unlock(&h->lock);
+            if (done) return 0;
+            hls_sleep_ms(2);
+            continue;
+        }
+        /* First read after the flush settled: raise the reposition boundary once
+         * so the demuxer drops its pre-seek state and re-anchors before the
+         * target segment's bytes flow. */
+        if (h->flush_gen != h->read_signaled_gen) {
+            h->read_signaled_gen = h->flush_gen;
+            hls_mutex_unlock(&h->lock);
+            return BASIS_READ_REPOSITION;
+        }
         if (h->ring_count > 0) {
             int take = h->ring_count < len ? h->ring_count : len;
             int first = h->ring_cap - h->ring_tail;
@@ -761,9 +875,19 @@ int basis_hls_can_seek(void* ctx) {
 
 int basis_hls_request_seek(void* ctx, long long target_ms) {
     basis_hls_t* h = (basis_hls_t*)ctx;
-    if (!basis_hls_can_seek(ctx) || target_ms < 0) return -1;
+    if (!h || h->vod_count <= 0 || target_ms < 0) return -1;   /* vod_count is fixed at open */
+    /* Accept the seek atomically with the producer_done check so a request can't
+     * be lost against the producer exiting on end-of-stream: the endlist path
+     * sets producer_done under this same lock while verifying no seek is pending,
+     * so exactly one of the two wins. Publish {target, generation, pending}
+     * together; the generation runs ahead of flush_gen until the producer
+     * finishes flushing, during which the consumer withholds the pre-seek ring. */
+    hls_mutex_lock(&h->lock);
+    if (h->producer_done) { hls_mutex_unlock(&h->lock); return -1; }
     h->seek_target_ms = (long)target_ms;
+    h->seek_gen++;
     h->seek_pending = 1;
+    hls_mutex_unlock(&h->lock);
     return 0;
 }
 

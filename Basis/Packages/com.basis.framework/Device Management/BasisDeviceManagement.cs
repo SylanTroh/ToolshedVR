@@ -611,6 +611,8 @@ namespace Basis.Scripts.Device_Management
                         input.HasCalibratedOffsetSnapshot = prev.HasCalibratedOffsetSnapshot;
                         input.CalibratedUnscaledPosition = prev.CalibratedUnscaledPosition;
                         input.CalibratedUnscaledRotation = prev.CalibratedUnscaledRotation;
+                        input.CalibratedUnscaledHeadPosition = prev.CalibratedUnscaledHeadPosition;
+                        input.CalibratedUnscaledHeadRotation = prev.CalibratedUnscaledHeadRotation;
                         BasisAvatarIKStageCalibration.ReprojectTrackerOffsetsForCurrentAvatar();
                     }
                     else
@@ -676,7 +678,9 @@ namespace Basis.Scripts.Device_Management
                     InverseOffsetFromBone = device.Control.InverseOffsetFromBone,
                     HasCalibratedOffsetSnapshot = device.HasCalibratedOffsetSnapshot,
                     CalibratedUnscaledPosition = device.CalibratedUnscaledPosition,
-                    CalibratedUnscaledRotation = device.CalibratedUnscaledRotation
+                    CalibratedUnscaledRotation = device.CalibratedUnscaledRotation,
+                    CalibratedUnscaledHeadPosition = device.CalibratedUnscaledHeadPosition,
+                    CalibratedUnscaledHeadRotation = device.CalibratedUnscaledHeadRotation
                 });
             }
         }
@@ -787,6 +791,7 @@ namespace Basis.Scripts.Device_Management
             {
                 OnInitializationCompleted += RunAfterInitialized;
                 BasisSettingsDefaults.EnableFBT.OnChanged += OnEnableFBTChanged;
+                BasisSettingsDefaults.TrackerVisuals.OnChanged += OnTrackerVisualsChanged;
                 BasisLocalPlayer.AfterSimulateOnRender.AddAction(98, ApplyAllDeviceMovement);
                 HasEvents = true;
             }
@@ -801,6 +806,7 @@ namespace Basis.Scripts.Device_Management
             {
                 OnInitializationCompleted -= RunAfterInitialized;
                 BasisSettingsDefaults.EnableFBT.OnChanged -= OnEnableFBTChanged;
+                BasisSettingsDefaults.TrackerVisuals.OnChanged -= OnTrackerVisualsChanged;
                 BasisLocalPlayer.AfterSimulateOnRender.RemoveAction(98, ApplyAllDeviceMovement);
                 HasEvents = false;
             }
@@ -838,6 +844,43 @@ namespace Basis.Scripts.Device_Management
             if (!value)
             {
                 UnassignFBTrackers();
+            }
+        }
+
+        /// <summary>
+        /// Live re-render when the tracker-visual mode changes. Hides currently-shown visuals this
+        /// frame and re-shows them next frame (after Unity's deferred Destroy completes) so the new
+        /// mode's visual is picked cleanly. Only devices already showing a visual are refreshed, so
+        /// nothing appears while trackers are meant to be hidden.
+        /// </summary>
+        private void OnTrackerVisualsChanged(string value)
+        {
+            StartCoroutine(RefreshTrackerVisualsNextFrame());
+        }
+
+        private IEnumerator RefreshTrackerVisualsNextFrame()
+        {
+            bool anyVisible = false;
+            for (int i = 0; i < AllInputDevices.Count; i++)
+            {
+                BasisInput input = AllInputDevices[i];
+                if (input == null) continue;
+                if (input.BasisVisualTracker != null)
+                {
+                    input.HideTrackedVisual();
+                    anyVisible = true;
+                }
+            }
+            if (!anyVisible)
+            {
+                yield break;
+            }
+            yield return null;
+            for (int i = 0; i < AllInputDevices.Count; i++)
+            {
+                BasisInput input = AllInputDevices[i];
+                if (input == null) continue;
+                input.ShowTrackedVisual();
             }
         }
 

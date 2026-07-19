@@ -1,6 +1,6 @@
 using NUnit.Framework;
 using UnityEngine;
-using UnityEngine.Animations.Rigging;
+using Basis.IK;
 
 namespace Basis.Tests.IK
 {
@@ -354,7 +354,7 @@ namespace Basis.Tests.IK
 
         static BasisShoulderSolveInput MakeInput(bool isLeft, Quaternion chest)
         {
-            BasisShoulderSolveInput input;
+            BasisShoulderSolveInput input = default;
             input.ShoulderPos = Shoulder;
             input.HandTargetPos = Shoulder;
             input.ElbowPos = Shoulder;

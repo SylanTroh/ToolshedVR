@@ -471,6 +471,14 @@
       "value": "Automatically fix incompatible avatar materials on load."
     },
     {
+      "key": "settings.developer.shaderBlocklist.tooltip",
+      "value": "Replace materials whose shader name or keywords match the blocklist with the fallback material. Applies to newly loaded content."
+    },
+    {
+      "key": "settings.developer.shaderBlocklistPatterns.tooltip",
+      "value": "Comma-separated, case-insensitive substrings matched against shader names and material keywords."
+    },
+    {
       "key": "settings.developer.graphicsStatePrewarm.tooltip",
       "value": "Cache and pre-create full GPU pipeline states to reduce hitches on repeat loads."
     },
@@ -481,10 +489,6 @@
     {
       "key": "settings.developer.console.tooltip",
       "value": "Show the in-app developer console on this page."
-    },
-    {
-      "key": "settings.developer.euroFilter.tooltip",
-      "value": "Show controls for tuning the network smoothing filter."
     },
     {
       "key": "settings.developer.netStats.tooltip",
@@ -571,18 +575,6 @@
       "value": "Start full-body calibration; pull both triggers while standing in a T-pose."
     },
     {
-      "key": "calibration.decreaseHeight.tooltip",
-      "value": "Nudge your standing height down a little. Adjusts how tall you stand after calibration; it does not resize the avatar."
-    },
-    {
-      "key": "calibration.increaseHeight.tooltip",
-      "value": "Nudge your standing height up a little. Adjusts how tall you stand after calibration; it does not resize the avatar."
-    },
-    {
-      "key": "calibration.pitchLabel.tooltip",
-      "value": "Use a look up, down, and forward sequence for more accurate height calibration."
-    },
-    {
       "key": "calibration.bodyTrackingSettings.tooltip",
       "value": "Open the body tracking settings to adjust full-body tracking options."
     },
@@ -635,6 +627,10 @@
       "value": "Plant your avatar's feet on the ground and on steps automatically."
     },
     {
+      "key": "settings.bodyTracking.neuralPole.tooltip",
+      "value": "Experimental: place the invented elbow and knee (when they aren't tracked) using small neural networks trained on human motion, instead of the default polynomials. Off by default."
+    },
+    {
       "key": "settings.bodyTracking.disableAnimFbt.tooltip",
       "value": "Turn off built-in animations while full-body tracking is active."
     },
@@ -673,6 +669,10 @@
     {
       "key": "settings.bodyTracking.shoulderSolve.title.tooltip",
       "value": "Let shoulders rotate and shift naturally as your arms move."
+    },
+    {
+      "key": "settings.bodyTracking.shoulderShrug.title.tooltip",
+      "value": "Raise your shoulders when you shrug with your arms at your sides."
     },
     {
       "key": "settings.bodyTracking.shoulderElevation.title.tooltip",
@@ -765,6 +765,10 @@
     {
       "key": "settings.bodyTracking.moveBodyBackWhenCrouching.title.tooltip",
       "value": "How far your body shifts backward as you crouch down."
+    },
+    {
+      "key": "settings.bodyTracking.trunkCounterbalance.title.tooltip",
+      "value": "How far your hips travel back as you bend forward."
     },
     {
       "key": "settings.bodyTracking.swingSmoothRate.title.tooltip",
@@ -1213,18 +1217,6 @@
     {
       "key": "ui.advanced.tooltip",
       "value": "Show advanced settings with extra options for fine tuning."
-    },
-    {
-      "key": "settings.network.euro.minCutoff.tooltip",
-      "value": "Lowest smoothing applied to network movement; smaller values steady slow motion but add a little lag."
-    },
-    {
-      "key": "settings.network.euro.beta.tooltip",
-      "value": "How quickly smoothing eases off during fast movement to reduce lag."
-    },
-    {
-      "key": "settings.network.euro.derivativeCutoff.tooltip",
-      "value": "Smoothing applied to speed changes, helping suppress jitter during quick direction shifts."
     },
     {
       "key": "settings.perf.sessionBypass.toggle.tooltip",
@@ -1979,6 +1971,46 @@
       "value": "({0})"
     },
     {
+      "key": "trackerLinking.pair.title",
+      "value": "Linked pair"
+    },
+    {
+      "key": "trackerLinking.unlink",
+      "value": "Unlink"
+    },
+    {
+      "key": "trackerLinking.unlink.tooltip",
+      "value": "Break this pair. Both trackers go back to being calibrated on their own. Recalibrate afterwards."
+    },
+    {
+      "key": "trackerLinking.roleOverridePair.tooltip",
+      "value": "Lock the pair's fused midpoint to a body role. Auto lets calibration choose."
+    },
+    {
+      "key": "trackerLinking.status.driving",
+      "value": "Driving {0}"
+    },
+    {
+      "key": "trackerLinking.status.unassigned",
+      "value": "No role yet — run full-body calibration"
+    },
+    {
+      "key": "trackerLinking.status.pairDriving",
+      "value": "Fused — driving {0}"
+    },
+    {
+      "key": "trackerLinking.status.pairUncalibrated",
+      "value": "Fused — run full-body calibration to give the pair a role"
+    },
+    {
+      "key": "trackerLinking.status.pairPending",
+      "value": "Linked, waiting for the merged tracker to come up"
+    },
+    {
+      "key": "trackerLinking.status.partnerOffline",
+      "value": "Linked to a tracker that isn't connected — reconnect it, or unlink"
+    },
+    {
       "key": "trackerLinking.trackers.title",
       "value": "Connected Trackers"
     },
@@ -1989,6 +2021,14 @@
     {
       "key": "trackerLinking.trustSteamVRRoles.tooltip",
       "value": "Also bind trackers using the body-part roles assigned by hand in SteamVR settings. Only enable this if you actually set those roles yourself."
+    },
+    {
+      "key": "trackerLinking.continuousCalibration",
+      "value": "Continuous Calibration"
+    },
+    {
+      "key": "trackerLinking.continuousCalibration.tooltip",
+      "value": "While you stand still in your calibration pose, small tracker strap slips are slowly absorbed into the current calibration (position only, capped at 5 cm). Large drift is never auto-corrected — recalibrate instead."
     },
     {
       "key": "trackerLinking.connectorTrackers",
@@ -2143,26 +2183,6 @@
       "value": "Pull Triggers to Calibrate"
     },
     {
-      "key": "calibration.decreaseHeight",
-      "value": "Decrease Height"
-    },
-    {
-      "key": "calibration.increaseHeight",
-      "value": "Increase Height"
-    },
-    {
-      "key": "calibration.nudgeStandingHeight",
-      "value": "Nudge Standing Height"
-    },
-    {
-      "key": "calibration.nudgeStandingHeight.tooltip",
-      "value": "Manually raise or lower your calibrated standing height in small steps."
-    },
-    {
-      "key": "calibration.nudgeWarning",
-      "value": "Warning: nudging over 0.2 m can throw off tracker matching."
-    },
-    {
       "key": "calibration.lockInGuides",
       "value": "Show Lock-In Guides"
     },
@@ -2175,22 +2195,6 @@
       "value": "Body Tracking Settings"
     },
     {
-      "key": "calibration.pitchLabel",
-      "value": "Pitch Calibration: {0}"
-    },
-    {
-      "key": "calibration.pitch.up",
-      "value": "Look UP, pull triggers"
-    },
-    {
-      "key": "calibration.pitch.down",
-      "value": "Look DOWN, pull triggers"
-    },
-    {
-      "key": "calibration.pitch.forward",
-      "value": "Look FORWARD, pull triggers"
-    },
-    {
       "key": "calibration.reset",
       "value": "Reset Calibration"
     },
@@ -2201,6 +2205,14 @@
     {
       "key": "calibration.resetConfirm",
       "value": "Reset all calibration settings to defaults? You will need to recalibrate full-body tracking afterwards."
+    },
+    {
+      "key": "calibration.mirror",
+      "value": "Show Mirror"
+    },
+    {
+      "key": "calibration.mirror.tooltip",
+      "value": "A see-through mirror that shows only your avatar and the calibration trackers, so you can line up your pucks without closing the menu."
     },
     {
       "key": "menu.servers.source.savedServers",
@@ -4651,6 +4663,26 @@
       "value": "Full Body Tracking"
     },
     {
+      "key": "settings.bodyTracking.trackerVisuals.title",
+      "value": "Tracker Visuals"
+    },
+    {
+      "key": "settings.bodyTracking.trackerVisuals.tooltip",
+      "value": "Choose what tracked devices (controllers, trackers) show: Off, simple Markers, or the real Device Models from your headset's runtime."
+    },
+    {
+      "key": "settings.bodyTracking.trackerVisuals.off",
+      "value": "Off"
+    },
+    {
+      "key": "settings.bodyTracking.trackerVisuals.markers",
+      "value": "Markers"
+    },
+    {
+      "key": "settings.bodyTracking.trackerVisuals.deviceModels",
+      "value": "Device Models"
+    },
+    {
       "key": "settings.bodyTracking.osc",
       "value": "OSC (Face / Parameters)"
     },
@@ -4699,6 +4731,10 @@
       "value": "Foot IK"
     },
     {
+      "key": "settings.bodyTracking.neuralPole",
+      "value": "Neural Elbow/Knee (experimental)"
+    },
+    {
       "key": "settings.bodyTracking.disableAnimFbt",
       "value": "Disable Animations in FBT"
     },
@@ -4717,6 +4753,22 @@
     {
       "key": "settings.bodyTracking.butterflyKneeMaxOpen.title.tooltip",
       "value": "How far the knees may fall open in the butterfly pose, clamped to the hip's natural range. Default: 60"
+    },
+    {
+      "key": "settings.bodyTracking.kneeFollowsFoot",
+      "value": "Knee Follows Foot"
+    },
+    {
+      "key": "settings.bodyTracking.kneeFollowsFoot.tooltip",
+      "value": "With foot trackers (and no knee trackers), point a foot and the knee turns to follow it instead of always aiming straight ahead. Fades out as you lie down, where the butterfly splay takes over. Default: On"
+    },
+    {
+      "key": "settings.bodyTracking.kneeFootFollow.title",
+      "value": "Knee Follows Foot Amount"
+    },
+    {
+      "key": "settings.bodyTracking.kneeFootFollow.title.tooltip",
+      "value": "How far the knee turns to match the foot while standing. 1 = the knee points exactly where the toe does; lower values keep it a little inboard of the foot, like a real leg. Default: 1"
     },
     {
       "key": "settings.bodyTracking.playspaceMover.title",
@@ -4963,6 +5015,34 @@
       "value": "Calibration State"
     },
     {
+      "key": "settings.bodyTracking.debug.bodyFit",
+      "value": "Body Fit"
+    },
+    {
+      "key": "settings.bodyTracking.section.bodyFit.title",
+      "value": "Body Fit"
+    },
+    {
+      "key": "settings.bodyTracking.section.bodyFit.description",
+      "value": "Stretches and collapses the avatar's arm, leg and spine bones so its proportions match your own, instead of relying on one uniform scale. Arms are fitted from your arm span; legs and spine need a hips tracker. Your standing height is preserved exactly, so this never moves your feet off the floor. Other players see the avatar at its authored proportions."
+    },
+    {
+      "key": "settings.bodyTracking.bodyFit.enabled.title",
+      "value": "Fit Avatar To My Proportions"
+    },
+    {
+      "key": "settings.bodyTracking.bodyFit.enabled.description",
+      "value": "Resizes individual bones at calibration so your hands and hips land where the avatar's are. Recalibrate after changing this."
+    },
+    {
+      "key": "settings.bodyTracking.bodyFit.maxDeviation.title",
+      "value": "Maximum Bone Change"
+    },
+    {
+      "key": "settings.bodyTracking.bodyFit.maxDeviation.tooltip",
+      "value": "How far a bone may stretch or collapse from its authored length. Higher values fit your body more exactly but alter the character's proportions more visibly. 0 disables the fit."
+    },
+    {
       "key": "settings.bodyTracking.section.armTwist.title",
       "value": "Arm Twist"
     },
@@ -4985,6 +5065,30 @@
     {
       "key": "settings.bodyTracking.upperArmTwist.description",
       "value": "How evenly the upper arm twist bone spreads the elbow's roll along the bone. 1 = even gradient; 0 = off. Default: 1.0"
+    },
+    {
+      "key": "settings.bodyTracking.section.spineProportion.title",
+      "value": "Spine Proportion Match"
+    },
+    {
+      "key": "settings.bodyTracking.section.spineProportion.description",
+      "value": "With a head and hips tracker, gently scales the avatar's spine so its torso length matches yours. Stops a mismatched avatar spine from crumpling (avatar torso too long) or over-stretching (too short). Measured once at calibration; only you see the change."
+    },
+    {
+      "key": "settings.bodyTracking.spineProportion.enabled.title",
+      "value": "Match Spine To My Torso"
+    },
+    {
+      "key": "settings.bodyTracking.spineProportion.enabled.description",
+      "value": "Uniformly stretches or shrinks the avatar's spine a small amount so it spans your real head-to-hips distance. Does nothing without a hips tracker, or when the avatar already matches you."
+    },
+    {
+      "key": "settings.bodyTracking.spineProportion.maxScale.title",
+      "value": "Max Spine Scaling"
+    },
+    {
+      "key": "settings.bodyTracking.spineProportion.maxScale.tooltip",
+      "value": "The largest length change allowed, as a fraction (0.12 = up to 12% longer or shorter). Bigger corrects larger mismatches but can visibly change your torso length. Default: 0.12"
     },
     {
       "key": "settings.bodyTracking.section.anatomy.title",
@@ -5025,6 +5129,22 @@
     {
       "key": "settings.bodyTracking.anat.pelvicTwistRouting.description",
       "value": "Forces hip-to-chest twist to distribute 75% upper chest / 25% spine — the real anatomical ratio for axial rotation."
+    },
+    {
+      "key": "settings.bodyTracking.anat.spineRom.title",
+      "value": "Anatomical Spine Limits"
+    },
+    {
+      "key": "settings.bodyTracking.anat.spineRom.description",
+      "value": "Holds each spine bone inside the range of motion of the real vertebrae it stands for — the lumbar barely twists, the chest barely folds, the neck is free. Stops impossible spine poses."
+    },
+    {
+      "key": "settings.bodyTracking.anat.chestIkTarget.title",
+      "value": "Chest IK Target"
+    },
+    {
+      "key": "settings.bodyTracking.anat.chestIkTarget.description",
+      "value": "Places the chest at its own target instead of leaving it wherever the head solve happens to put it, so the torso follows your real chest (or a chest tracker) more faithfully. The head stays exactly on the headset."
     },
     {
       "key": "settings.bodyTracking.anat.legSwivelSmoothing.title",
@@ -5095,6 +5215,30 @@
       "value": "Allow body collision to push the elbow even when an elbow tracker is driving it. Off lets the tracker fully control a tracked elbow."
     },
     {
+      "key": "settings.bodyTracking.elbowDrag.title",
+      "value": "Elbow Drag"
+    },
+    {
+      "key": "settings.bodyTracking.elbowDrag.title.tooltip",
+      "value": "Adds weight to the predicted elbow so waving your hands does not throw it around."
+    },
+    {
+      "key": "settings.bodyTracking.elbowDrag.description",
+      "value": "Only applies when you have no elbow tracker. Lags the predicted elbow slightly, the way a real forearm's weight does, so fast hand motion does not swing it. An elbow tracker is your own input and is never lagged."
+    },
+    {
+      "key": "settings.bodyTracking.elbowDragHz.title",
+      "value": "Elbow Drag Frequency"
+    },
+    {
+      "key": "settings.bodyTracking.elbowDragHz.title.tooltip",
+      "value": "Lower is heavier drag. 1 Hz is very heavy, 8 Hz is barely noticeable."
+    },
+    {
+      "key": "settings.bodyTracking.elbowDragHz.description",
+      "value": "Corner frequency of the elbow drag, in Hz. Lower values damp waving harder but make the elbow trail further behind a deliberate reach. Default 2.5."
+    },
+    {
       "key": "settings.bodyTracking.handCapsule.title",
       "value": "Use Hand Capsule"
     },
@@ -5141,6 +5285,14 @@
     {
       "key": "settings.bodyTracking.shoulderSolve.description",
       "value": "Raises and protracts shoulders based on hand target position before arm IK runs."
+    },
+    {
+      "key": "settings.bodyTracking.shoulderShrug.title",
+      "value": "Shoulder Shrug"
+    },
+    {
+      "key": "settings.bodyTracking.shoulderShrug.description",
+      "value": "Detects a shrug from the hands or elbow trackers while your arms hang at your sides and raises the shoulders to match. Default: on"
     },
     {
       "key": "settings.bodyTracking.shoulderElevation.title",
@@ -5309,6 +5461,14 @@
     {
       "key": "settings.bodyTracking.moveBodyBackWhenCrouching.description",
       "value": "Shifts the hips back as the head drops, so a squat or forward bow sits over the feet instead of folding straight down. Multiplies the head's drop distance; 0 disables. Default: 1"
+    },
+    {
+      "key": "settings.bodyTracking.trunkCounterbalance.title",
+      "value": "Trunk Counterbalance"
+    },
+    {
+      "key": "settings.bodyTracking.trunkCounterbalance.description",
+      "value": "Moves the hips back as your trunk folds forward, the way a real body counterweights a bend to keep its balance over the feet. Without it the whole fold happens around a pinned pelvis and the chest drives down into the body. Multiplies how far your neck travels forward; 0 disables. Default: 0.38"
     },
     {
       "key": "settings.bodyTracking.swingSmoothRate.title",
@@ -5661,6 +5821,74 @@
     {
       "key": "settings.bodyTracking.derivativeCutoff.description",
       "value": "Controls how much motion speed affects smoothing behavior. Lower values are steadier; higher values feel more responsive but noisier."
+    },
+    {
+      "key": "settings.bodyTracking.smoothing.group.head",
+      "value": "Head"
+    },
+    {
+      "key": "settings.bodyTracking.smoothing.group.hands",
+      "value": "Hands"
+    },
+    {
+      "key": "settings.bodyTracking.smoothing.group.elbows",
+      "value": "Elbows"
+    },
+    {
+      "key": "settings.bodyTracking.smoothing.group.chest",
+      "value": "Chest"
+    },
+    {
+      "key": "settings.bodyTracking.smoothing.group.hips",
+      "value": "Hips"
+    },
+    {
+      "key": "settings.bodyTracking.smoothing.group.knees",
+      "value": "Knees"
+    },
+    {
+      "key": "settings.bodyTracking.smoothing.group.feet",
+      "value": "Feet"
+    },
+    {
+      "key": "settings.bodyTracking.smoothing.preset.auto",
+      "value": "Auto"
+    },
+    {
+      "key": "settings.bodyTracking.smoothing.preset.off",
+      "value": "Off"
+    },
+    {
+      "key": "settings.bodyTracking.smoothing.preset.light",
+      "value": "Light"
+    },
+    {
+      "key": "settings.bodyTracking.smoothing.preset.standard",
+      "value": "Standard"
+    },
+    {
+      "key": "settings.bodyTracking.smoothing.preset.heavy",
+      "value": "Heavy"
+    },
+    {
+      "key": "settings.bodyTracking.smoothing.preset.optical",
+      "value": "Optical"
+    },
+    {
+      "key": "settings.bodyTracking.smoothing.preset.custom",
+      "value": "Custom"
+    },
+    {
+      "key": "settings.bodyTracking.smoothing.preset.tooltip",
+      "value": "How hard this group of trackers is filtered. Auto picks for you from the hardware actually driving these bones, and follows it if you swap. Off passes the tracker through untouched. Light suits lighthouse trackers and controllers, which are already quiet. Standard is the default. Heavy suits IMU trackers such as SlimeVR that drift and buzz. Optical suits camera hand tracking: very steady when you hold still, and it lets go quickly when you move fast. Custom replaces the preset with the sliders below."
+    },
+    {
+      "key": "settings.bodyTracking.smoothing.custom",
+      "value": "Custom Tuning"
+    },
+    {
+      "key": "settings.bodyTracking.smoothing.custom.tooltip",
+      "value": "Ignore the preset above and tune this group by hand with the sliders below."
     },
     {
       "key": "settings.nameplates.title",
@@ -6439,6 +6667,22 @@
       "value": "Replace broken or unsupported shaders with the URP fallback shader. Off by default; mainly needed during graphics API changes."
     },
     {
+      "key": "settings.developer.shaderBlocklist",
+      "value": "Shader Blocklist"
+    },
+    {
+      "key": "settings.developer.shaderBlocklist.description",
+      "value": "Force the fallback material on any material whose shader name or shader keywords match a user-defined pattern list. Off by default; applies to avatars, props, and worlds as they load."
+    },
+    {
+      "key": "settings.developer.shaderBlocklistPatterns",
+      "value": "Blocked Shader Patterns"
+    },
+    {
+      "key": "settings.developer.shaderBlocklistPatterns.description",
+      "value": "Comma-separated list of case-insensitive substrings matched against shader names and material shader keywords."
+    },
+    {
       "key": "settings.developer.graphicsStatePrewarm",
       "value": "Pipeline State Prewarm"
     },
@@ -6591,14 +6835,6 @@
       "value": "Show inline console log output."
     },
     {
-      "key": "settings.developer.euroFilter",
-      "value": "Network Euro Filter"
-    },
-    {
-      "key": "settings.developer.euroFilter.description",
-      "value": "Show One Euro filter tuning for remote interpolation."
-    },
-    {
       "key": "settings.developer.netStats",
       "value": "Network & Statistics"
     },
@@ -6749,18 +6985,6 @@
     {
       "key": "settings.developer.assignedTrackers.description",
       "value": "List every input device that has been assigned a tracked bone role."
-    },
-    {
-      "key": "settings.network.euro.minCutoff",
-      "value": "Min Cutoff"
-    },
-    {
-      "key": "settings.network.euro.beta",
-      "value": "Beta"
-    },
-    {
-      "key": "settings.network.euro.derivativeCutoff",
-      "value": "Derivative Cutoff"
     },
     {
       "key": "settings.network.connection",
@@ -7955,6 +8179,14 @@
       "value": "Stop non-admin players from sharing new image pickups, and from receiving images shared while this is on. Admins are unaffected."
     },
     {
+      "key": "settings.admin.title.remoteEndEffectorIK",
+      "value": "Remote End-Effector IK"
+    },
+    {
+      "key": "settings.admin.title.remoteEndEffectorIK.tooltip",
+      "value": "Two-bone-IK remote avatars' tracked hands and feet onto their sent world targets so they stop sliding. On by default; turn off to fall back to pure-FK playback for everyone."
+    },
+    {
       "key": "settings.admin.minAvatarHeight",
       "value": "Min Avatar Height"
     },
@@ -8177,6 +8409,38 @@
     {
       "key": "settings.ra.title.voiceBuffer",
       "value": "Voice Buffer"
+    },
+    {
+      "key": "settings.bodyTracking.section.headSwing.title",
+      "value": "Desktop Head Carry"
+    },
+    {
+      "key": "settings.bodyTracking.section.headSwing.description",
+      "value": "Desktop only. Your head pivots at the base of your neck, not at itself, so looking down carries your eyes forward - out over your feet. In VR the headset does this on its own because it physically rides that same lever arm. Desktop used to pin the camera above the hips, so the gaze tipped, the chest hunched to follow, and the head never actually went anywhere."
+    },
+    {
+      "key": "settings.bodyTracking.headSwing.enabled.title",
+      "value": "Carry the head when looking up/down"
+    },
+    {
+      "key": "settings.bodyTracking.headSwing.enabled.description",
+      "value": "Moves the camera forward as you look down and back as you look up, by the amount your avatar's own neck geometry says it should. Turn this off to pin the camera over the hips as it was before."
+    },
+    {
+      "key": "settings.bodyTracking.headSwing.strength",
+      "value": "Carry Strength"
+    },
+    {
+      "key": "settings.bodyTracking.headSwing.strength.tooltip",
+      "value": "1.0 is the full swing implied by your avatar's neck-to-eye distance. Lower it if the camera travel feels like too much; 0 disables the carry entirely."
+    },
+    {
+      "key": "settings.bodyTracking.headSwing.backward",
+      "value": "Look-Up Carry"
+    },
+    {
+      "key": "settings.bodyTracking.headSwing.backward.tooltip",
+      "value": "How far the camera pulls back when you look UP, as a fraction of the look-down carry. Looking up is not the mirror of looking down - your upper back takes most of it, so your skull does not slide backward nearly as far. 1.0 would treat them the same."
     }
   ]
 }

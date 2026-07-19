@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using Basis.Scripts.Drivers;
 using Basis.Scripts.TransformBinders.BoneControl;
 using Basis.Scripts.Settings;
@@ -51,7 +51,10 @@ namespace Basis.BasisUI
 
         public static BasisSettingsBinding<bool> CustomScale = new("customscale", new BasisPlatformDefault<bool>(false));
 
-        public static BasisSettingsBinding<bool> FootIKEnabled = new("footik", new BasisPlatformDefault<bool>(false));
+        // Key bumped to _v2: BasisSettingsSystem.LoadString persists a default the first time it is read, so
+        // "footik" is already pinned to false on every install that has ever launched. Flipping the value
+        // alone would only reach fresh installs.
+        public static BasisSettingsBinding<bool> FootIKEnabled = new("footik_v2", new BasisPlatformDefault<bool>(true));
 
         /// <summary>
         /// When enabled, suppresses jump/landing Mecanim animations and the landing hip dip
@@ -376,6 +379,8 @@ namespace Basis.BasisUI
 
         public static BasisSettingsBinding<bool> EnableShaderPrewarm = new("enableshaderprewarm", new BasisPlatformDefault<bool>(false));
         public static BasisSettingsBinding<bool> EnableMaterialCorrection = new("enablematerialcorrection", new BasisPlatformDefault<bool>(false));
+        public static BasisSettingsBinding<bool> EnableShaderBlocklist = new("enableshaderblocklist", new BasisPlatformDefault<bool>(false));
+        public static BasisSettingsBinding<string> ShaderBlocklistPatterns = new("shaderblocklistpatterns", new BasisPlatformDefault<string>(string.Empty));
         public static BasisSettingsBinding<bool> EnableGraphicsStatePrewarm = new("enablegraphicsstateprewarm", new BasisPlatformDefault<bool>(false));
 
         /// <summary>
@@ -451,19 +456,16 @@ namespace Basis.BasisUI
 
         public static BasisSettingsBinding<string> IKMode = new("ikmode", new BasisPlatformDefault<string>("auto"));
 
-        public static BasisSettingsBinding<string> IKLockMode = new("iklockmode_v2", new BasisPlatformDefault<string>("lock both"));
+        public static BasisSettingsBinding<string> IKLockMode = new("iklockmode_v3", new BasisPlatformDefault<string>("lock head"));
 
-        public static BasisSettingsBinding<bool> PitchCalibration = new("pitchcalibration", new BasisPlatformDefault<bool>(false));
+        public static BasisSettingsBinding<bool> CalibrationMirror = new("calibrationmirror", new BasisPlatformDefault<bool>(false));
 
-        // Systematic correction (metres) added to the measured standing eye height before DeviceScale.
-        // It bridges a backend's HMD-pose-origin vs true-eye gap that CenterEyeVerticalOffset under-reports
-        // (seen on OpenVR: avatar renders too tall). Default 0 = no-op; persists, so the gap is corrected once.
-        // Read the "true-eye estimate vs DeviceScale" calibration log to dial in the real value.
-        public static BasisSettingsBinding<float> CalibrationStandingEyeHeightMeters = new("calibrationstandingeyeheightmeters", new BasisPlatformDefault<float>(0f));
-
-        // Gate for the standing eye-height correction above. When off, the correction is ignored (treated as 0)
-        // regardless of the stored metres, and the slider is hidden in the calibration panel. Off by default.
-        public static BasisSettingsBinding<bool> EnableStandingEyeHeightCorrection = new("enablestandingeyeheightcorrection", new BasisPlatformDefault<bool>(false));
+        // Arm-to-height ratio: scale the avatar by a percentage between the two measurements instead of a
+        // single mode -- 0 = eye height, 1 = arm distance (range in BasisCalibrationMath.ArmToHeightBlendMin/Max).
+        // Chooses which measurement the uniform scale matches; FBIKBodyFit takes up the residual per-segment.
+        // While enabled it replaces the Avatar Scaling Mode dropdown (VR only; desktop always scales by eye height).
+        public static BasisSettingsBinding<bool> EnableArmToHeightBlend = new("enablearmtoheightblend", new BasisPlatformDefault<bool>(false));
+        public static BasisSettingsBinding<float> ArmToHeightBlend = new("armtoheightblend", new BasisPlatformDefault<float>(0.5f));
 
         // The player's body size measured at their last explicit calibration (metres). Seeded back into
         // BasisHeightDriver at boot so the very first avatar fits at the right scale instead of the
@@ -472,15 +474,6 @@ namespace Basis.BasisUI
         // eye and are never saved here.
         public static BasisSettingsBinding<float> SavedPlayerEyeHeight = new("savedplayereyeheight", new BasisPlatformDefault<float>(0f));
         public static BasisSettingsBinding<float> SavedPlayerArmSpan = new("savedplayerarmspan", new BasisPlatformDefault<float>(0f));
-
-        // Gate for the standing-height nudge in the calibration window: shows the ± buttons AND applies the value
-        // below. Off by default.
-        public static BasisSettingsBinding<bool> EnableStandingHeightNudge = new("enablestandingheightnudge", new BasisPlatformDefault<bool>(false));
-
-        // Standing-height nudge (the historical "AdditionalPlayerHeight"): metres fed straight into the DeviceScale
-        // denominator (BasisCalibrationMath.StandingEyeDenominator), separate from the eye-height modifier. The ±
-        // buttons step this; gated by EnableStandingHeightNudge.
-        public static BasisSettingsBinding<float> AdditionalPlayerHeight = new("additionalplayerheight", new BasisPlatformDefault<float>(0f));
 
         // Estimate a ballpark scale from the live HMD/controllers while the player hasn't calibrated yet, so an
         // uncalibrated VR session isn't wildly mis-sized. A real calibration overrides it. See BasisAutoScaleEstimator.
@@ -592,18 +585,18 @@ namespace Basis.BasisUI
         public static BasisSettingsBinding<bool> UsePerfLimitLights = new("useperflimitlights", new BasisPlatformDefault<bool>(true));
         public static BasisSettingsBinding<float> MaxPerfLights = new("maxperflights", new BasisPlatformDefault<float>(0));
 
-        // Particles default on at 1 — one ambient system is fine, more is a hand
-        // grenade in a crowd. Trimmed, not blocked.
+        // Particles default on at 4 — a few ambient systems are fine, more is a
+        // hand grenade in a crowd. Trimmed, not blocked.
         public static BasisSettingsBinding<bool> UsePerfLimitParticleSystems = new("useperflimitparticlesystems", new BasisPlatformDefault<bool>(true));
-        public static BasisSettingsBinding<float> MaxPerfParticleSystems = new("maxperfparticlesystems", new BasisPlatformDefault<float>(1));
+        public static BasisSettingsBinding<float> MaxPerfParticleSystems = new("maxperfparticlesystems_v2", new BasisPlatformDefault<float>(4));
 
-        // Trails default on at 1.
+        // Trails default on at 4.
         public static BasisSettingsBinding<bool> UsePerfLimitTrailRenderers = new("useperflimittrailrenderers", new BasisPlatformDefault<bool>(true));
-        public static BasisSettingsBinding<float> MaxPerfTrailRenderers = new("maxperftrailrenderers", new BasisPlatformDefault<float>(1));
+        public static BasisSettingsBinding<float> MaxPerfTrailRenderers = new("maxperftrailrenderers_v2", new BasisPlatformDefault<float>(4));
 
-        // Line renderers default on at 1.
+        // Line renderers default on at 4.
         public static BasisSettingsBinding<bool> UsePerfLimitLineRenderers = new("useperflimitlinerenderers", new BasisPlatformDefault<bool>(true));
-        public static BasisSettingsBinding<float> MaxPerfLineRenderers = new("maxperflinerenderers", new BasisPlatformDefault<float>(1));
+        public static BasisSettingsBinding<float> MaxPerfLineRenderers = new("maxperflinerenderers_v2", new BasisPlatformDefault<float>(4));
 
         // Cloth defaults on at 1 — Unity Cloth is CPU-expensive per instance.
         public static BasisSettingsBinding<bool> UsePerfLimitCloth = new("useperflimitcloth", new BasisPlatformDefault<bool>(true));
@@ -686,11 +679,6 @@ namespace Basis.BasisUI
         // ---------------- NETWORKING ----------------
         public static BasisSettingsBinding<bool> AutoConnect = new("autoconnect", new BasisPlatformDefault<bool>(false));
 
-        // Network Euro filter parameters (remote player interpolation)
-        public static BasisSettingsBinding<float> NetEuroMinCutoff = new("neteuromincutoff", new BasisPlatformDefault<float>(0.05f));
-        public static BasisSettingsBinding<float> NetEuroBeta = new("neteurobeta", new BasisPlatformDefault<float>(2f));
-        public static BasisSettingsBinding<float> NetEuroDerivativeCutoff = new("neteuroderivativecutoff", new BasisPlatformDefault<float>(2f));
-
         // Remote-player jitter buffer target depth (packets to stay behind by).
         // Higher = smoother under network jitter, more latency. Default 2 (~100ms at 50ms sync).
         // Only takes effect when NetworkJitterBufferOverride is on — otherwise the default
@@ -708,6 +696,19 @@ namespace Basis.BasisUI
 
         public const string SwapMode_Shutdown = "Shutdown Runtime";
         public const string SwapMode_AutoSwap = "Auto Swap";
+
+        // ---------------- TRACKER VISUALS ----------------
+        /// <summary>
+        /// Chooses what is rendered for tracked input devices (controllers/trackers/etc.) while
+        /// tracker visuals are active (e.g. during calibration).
+        /// "Off" — nothing. "Markers" — the generic placeholder marker. "Device Models" — the real
+        /// device model loaded from the XR runtime, falling back to a marker when unavailable.
+        /// </summary>
+        public static BasisSettingsBinding<string> TrackerVisuals = new("tracker_visuals", new BasisPlatformDefault<string>(TrackerVisuals_DeviceModels));
+
+        public const string TrackerVisuals_Off = "Off";
+        public const string TrackerVisuals_Markers = "Markers";
+        public const string TrackerVisuals_DeviceModels = "Device Models";
 
         // ---------------- INTERACTIONS ----------------
         public static BasisSettingsBinding<bool> DisableSeats = new("disableseats", new BasisPlatformDefault<bool>(false));
@@ -796,6 +797,93 @@ namespace Basis.BasisUI
 
         public static BasisSettingsBinding<float> FBIKSmoothingStrength =
             new("fbiksmoothingstrength", new BasisPlatformDefault<float>(2.5f));
+
+        // ---------------- PER-GROUP SMOOTHING PROFILES ----------------
+        // One profile per tracker group so hardware with different noise characteristics can be tuned
+        // independently. Preset picks a tuning curve, or "Custom" to use the five sliders below instead.
+        public struct SmoothingGroupBindings
+        {
+            public string NameKey;
+            public BasisSettingsBinding<string> Preset;
+            // Superseded by the "Custom" preset entry. Kept bound and persisted so the toggle can be
+            // restored without stranding saved values; nothing reads it.
+            public BasisSettingsBinding<bool> Custom;
+            public BasisSettingsBinding<float> MinCutoff;
+            public BasisSettingsBinding<float> Beta;
+            public BasisSettingsBinding<float> Strength;
+            public BasisSettingsBinding<float> PositionHz;
+            public BasisSettingsBinding<float> RotationHz;
+        }
+
+        private const string SmoothingPresetDefault = Basis.Scripts.Drivers.BasisSmoothingProfiles.PresetAuto;
+
+        public static BasisSettingsBinding<string> FBIKSmoothPresetHead = new("fbiksmoothpresethead_v2", new BasisPlatformDefault<string>(SmoothingPresetDefault));
+        public static BasisSettingsBinding<bool> FBIKSmoothCustomHead = new("fbiksmoothcustomhead", new BasisPlatformDefault<bool>(false));
+        public static BasisSettingsBinding<float> FBIKSmoothMinCutoffHead = new("fbiksmoothmincutoffhead", new BasisPlatformDefault<float>(5.5f));
+        public static BasisSettingsBinding<float> FBIKSmoothBetaHead = new("fbiksmoothbetahead", new BasisPlatformDefault<float>(3.25f));
+        public static BasisSettingsBinding<float> FBIKSmoothStrengthHead = new("fbiksmoothstrengthhead", new BasisPlatformDefault<float>(2.5f));
+        public static BasisSettingsBinding<float> FBIKSmoothPosHzHead = new("fbiksmoothposhzhead", new BasisPlatformDefault<float>(20f));
+        public static BasisSettingsBinding<float> FBIKSmoothRotHzHead = new("fbiksmoothrothzhead", new BasisPlatformDefault<float>(25f));
+
+        public static BasisSettingsBinding<string> FBIKSmoothPresetHands = new("fbiksmoothpresethands_v2", new BasisPlatformDefault<string>(SmoothingPresetDefault));
+        public static BasisSettingsBinding<bool> FBIKSmoothCustomHands = new("fbiksmoothcustomhands", new BasisPlatformDefault<bool>(false));
+        public static BasisSettingsBinding<float> FBIKSmoothMinCutoffHands = new("fbiksmoothmincutoffhands", new BasisPlatformDefault<float>(5.5f));
+        public static BasisSettingsBinding<float> FBIKSmoothBetaHands = new("fbiksmoothbetahands", new BasisPlatformDefault<float>(3.25f));
+        public static BasisSettingsBinding<float> FBIKSmoothStrengthHands = new("fbiksmoothstrengthhands", new BasisPlatformDefault<float>(2.5f));
+        public static BasisSettingsBinding<float> FBIKSmoothPosHzHands = new("fbiksmoothposhzhands", new BasisPlatformDefault<float>(20f));
+        public static BasisSettingsBinding<float> FBIKSmoothRotHzHands = new("fbiksmoothrothzhands", new BasisPlatformDefault<float>(25f));
+
+        public static BasisSettingsBinding<string> FBIKSmoothPresetElbows = new("fbiksmoothpresetelbows_v2", new BasisPlatformDefault<string>(SmoothingPresetDefault));
+        public static BasisSettingsBinding<bool> FBIKSmoothCustomElbows = new("fbiksmoothcustomelbows", new BasisPlatformDefault<bool>(false));
+        public static BasisSettingsBinding<float> FBIKSmoothMinCutoffElbows = new("fbiksmoothmincutoffelbows", new BasisPlatformDefault<float>(5.5f));
+        public static BasisSettingsBinding<float> FBIKSmoothBetaElbows = new("fbiksmoothbetaelbows", new BasisPlatformDefault<float>(3.25f));
+        public static BasisSettingsBinding<float> FBIKSmoothStrengthElbows = new("fbiksmoothstrengthelbows", new BasisPlatformDefault<float>(2.5f));
+        public static BasisSettingsBinding<float> FBIKSmoothPosHzElbows = new("fbiksmoothposhzelbows", new BasisPlatformDefault<float>(20f));
+        public static BasisSettingsBinding<float> FBIKSmoothRotHzElbows = new("fbiksmoothrothzelbows", new BasisPlatformDefault<float>(25f));
+
+        public static BasisSettingsBinding<string> FBIKSmoothPresetChest = new("fbiksmoothpresetchest_v2", new BasisPlatformDefault<string>(SmoothingPresetDefault));
+        public static BasisSettingsBinding<bool> FBIKSmoothCustomChest = new("fbiksmoothcustomchest", new BasisPlatformDefault<bool>(false));
+        public static BasisSettingsBinding<float> FBIKSmoothMinCutoffChest = new("fbiksmoothmincutoffchest", new BasisPlatformDefault<float>(5.5f));
+        public static BasisSettingsBinding<float> FBIKSmoothBetaChest = new("fbiksmoothbetachest", new BasisPlatformDefault<float>(3.25f));
+        public static BasisSettingsBinding<float> FBIKSmoothStrengthChest = new("fbiksmoothstrengthchest", new BasisPlatformDefault<float>(2.5f));
+        public static BasisSettingsBinding<float> FBIKSmoothPosHzChest = new("fbiksmoothposhzchest", new BasisPlatformDefault<float>(20f));
+        public static BasisSettingsBinding<float> FBIKSmoothRotHzChest = new("fbiksmoothrothzchest", new BasisPlatformDefault<float>(25f));
+
+        public static BasisSettingsBinding<string> FBIKSmoothPresetHips = new("fbiksmoothpresethips_v2", new BasisPlatformDefault<string>(SmoothingPresetDefault));
+        public static BasisSettingsBinding<bool> FBIKSmoothCustomHips = new("fbiksmoothcustomhips", new BasisPlatformDefault<bool>(false));
+        public static BasisSettingsBinding<float> FBIKSmoothMinCutoffHips = new("fbiksmoothmincutoffhips", new BasisPlatformDefault<float>(5.5f));
+        public static BasisSettingsBinding<float> FBIKSmoothBetaHips = new("fbiksmoothbetahips", new BasisPlatformDefault<float>(3.25f));
+        public static BasisSettingsBinding<float> FBIKSmoothStrengthHips = new("fbiksmoothstrengthhips", new BasisPlatformDefault<float>(2.5f));
+        public static BasisSettingsBinding<float> FBIKSmoothPosHzHips = new("fbiksmoothposhzhips", new BasisPlatformDefault<float>(20f));
+        public static BasisSettingsBinding<float> FBIKSmoothRotHzHips = new("fbiksmoothrothzhips", new BasisPlatformDefault<float>(25f));
+
+        public static BasisSettingsBinding<string> FBIKSmoothPresetKnees = new("fbiksmoothpresetknees_v2", new BasisPlatformDefault<string>(SmoothingPresetDefault));
+        public static BasisSettingsBinding<bool> FBIKSmoothCustomKnees = new("fbiksmoothcustomknees", new BasisPlatformDefault<bool>(false));
+        public static BasisSettingsBinding<float> FBIKSmoothMinCutoffKnees = new("fbiksmoothmincutoffknees", new BasisPlatformDefault<float>(5.5f));
+        public static BasisSettingsBinding<float> FBIKSmoothBetaKnees = new("fbiksmoothbetaknees", new BasisPlatformDefault<float>(3.25f));
+        public static BasisSettingsBinding<float> FBIKSmoothStrengthKnees = new("fbiksmoothstrengthknees", new BasisPlatformDefault<float>(2.5f));
+        public static BasisSettingsBinding<float> FBIKSmoothPosHzKnees = new("fbiksmoothposhzknees", new BasisPlatformDefault<float>(20f));
+        public static BasisSettingsBinding<float> FBIKSmoothRotHzKnees = new("fbiksmoothrothzknees", new BasisPlatformDefault<float>(25f));
+
+        public static BasisSettingsBinding<string> FBIKSmoothPresetFeet = new("fbiksmoothpresetfeet_v2", new BasisPlatformDefault<string>(SmoothingPresetDefault));
+        public static BasisSettingsBinding<bool> FBIKSmoothCustomFeet = new("fbiksmoothcustomfeet", new BasisPlatformDefault<bool>(false));
+        public static BasisSettingsBinding<float> FBIKSmoothMinCutoffFeet = new("fbiksmoothmincutofffeet", new BasisPlatformDefault<float>(5.5f));
+        public static BasisSettingsBinding<float> FBIKSmoothBetaFeet = new("fbiksmoothbetafeet", new BasisPlatformDefault<float>(3.25f));
+        public static BasisSettingsBinding<float> FBIKSmoothStrengthFeet = new("fbiksmoothstrengthfeet", new BasisPlatformDefault<float>(2.5f));
+        public static BasisSettingsBinding<float> FBIKSmoothPosHzFeet = new("fbiksmoothposhzfeet", new BasisPlatformDefault<float>(20f));
+        public static BasisSettingsBinding<float> FBIKSmoothRotHzFeet = new("fbiksmoothrothzfeet", new BasisPlatformDefault<float>(25f));
+
+        // Order MUST match Basis.Scripts.Drivers.BasisSmoothingGroup.
+        public static readonly SmoothingGroupBindings[] FBIKSmoothingGroups =
+        {
+            new() { NameKey = "settings.bodyTracking.smoothing.group.head", Preset = FBIKSmoothPresetHead, Custom = FBIKSmoothCustomHead, MinCutoff = FBIKSmoothMinCutoffHead, Beta = FBIKSmoothBetaHead, Strength = FBIKSmoothStrengthHead, PositionHz = FBIKSmoothPosHzHead, RotationHz = FBIKSmoothRotHzHead },
+            new() { NameKey = "settings.bodyTracking.smoothing.group.hands", Preset = FBIKSmoothPresetHands, Custom = FBIKSmoothCustomHands, MinCutoff = FBIKSmoothMinCutoffHands, Beta = FBIKSmoothBetaHands, Strength = FBIKSmoothStrengthHands, PositionHz = FBIKSmoothPosHzHands, RotationHz = FBIKSmoothRotHzHands },
+            new() { NameKey = "settings.bodyTracking.smoothing.group.elbows", Preset = FBIKSmoothPresetElbows, Custom = FBIKSmoothCustomElbows, MinCutoff = FBIKSmoothMinCutoffElbows, Beta = FBIKSmoothBetaElbows, Strength = FBIKSmoothStrengthElbows, PositionHz = FBIKSmoothPosHzElbows, RotationHz = FBIKSmoothRotHzElbows },
+            new() { NameKey = "settings.bodyTracking.smoothing.group.chest", Preset = FBIKSmoothPresetChest, Custom = FBIKSmoothCustomChest, MinCutoff = FBIKSmoothMinCutoffChest, Beta = FBIKSmoothBetaChest, Strength = FBIKSmoothStrengthChest, PositionHz = FBIKSmoothPosHzChest, RotationHz = FBIKSmoothRotHzChest },
+            new() { NameKey = "settings.bodyTracking.smoothing.group.hips", Preset = FBIKSmoothPresetHips, Custom = FBIKSmoothCustomHips, MinCutoff = FBIKSmoothMinCutoffHips, Beta = FBIKSmoothBetaHips, Strength = FBIKSmoothStrengthHips, PositionHz = FBIKSmoothPosHzHips, RotationHz = FBIKSmoothRotHzHips },
+            new() { NameKey = "settings.bodyTracking.smoothing.group.knees", Preset = FBIKSmoothPresetKnees, Custom = FBIKSmoothCustomKnees, MinCutoff = FBIKSmoothMinCutoffKnees, Beta = FBIKSmoothBetaKnees, Strength = FBIKSmoothStrengthKnees, PositionHz = FBIKSmoothPosHzKnees, RotationHz = FBIKSmoothRotHzKnees },
+            new() { NameKey = "settings.bodyTracking.smoothing.group.feet", Preset = FBIKSmoothPresetFeet, Custom = FBIKSmoothCustomFeet, MinCutoff = FBIKSmoothMinCutoffFeet, Beta = FBIKSmoothBetaFeet, Strength = FBIKSmoothStrengthFeet, PositionHz = FBIKSmoothPosHzFeet, RotationHz = FBIKSmoothRotHzFeet },
+        };
 
         // ---------------- HIPS ----------------
         public static BasisSettingsBinding<bool> FBIKHipsSmoothPos =
@@ -1166,28 +1254,59 @@ namespace Basis.BasisUI
         public static BasisSettingsBinding<bool> FBIKCollisionsEnabled = new("fbikcollisionsenabled", new BasisPlatformDefault<bool>(true));
         public static BasisSettingsBinding<bool> FBIKProtectElbow = new("fbikprotectelbow", new BasisPlatformDefault<bool>(true));
         public static BasisSettingsBinding<bool> FBIKCollideTrackedElbow = new("fbikcollidetrackedelbow", new BasisPlatformDefault<bool>(false));
-        public static BasisSettingsBinding<bool> FBIKUseHandCapsule = new("fbikusehandcapsule", new BasisPlatformDefault<bool>(true));
+        // Elbow DRAG — no-elbow-tracker arms only. Lags the predicted pole with a fixed time constant so a
+        // waved hand does not throw the elbow around; a real elbow tracker is the user's own input and is
+        // never lagged. Hz is a corner frequency, so LOWER = heavier drag (tau = 1/(2*pi*hz)).
+        //
+        // 1.25 Hz (tau 127 ms) measured on a 3 Hz hand shake: elbow swing 10.5 -> 4.3 cm (59% off), peak
+        // speed 105 -> 42 cm/s, at a cost of 7.5 cm of transient lag on a deliberate 60 deg reach which
+        // settles in 311 ms. Was 2.5 Hz (34% off, 4.3 cm, 100 ms); the user asked to double the damping,
+        // and since this is a corner frequency doubling the damping means HALVING the number. Every cost
+        // roughly doubled with it, which is what a first-order lag does.
+        //
+        // For reference across the slider: 4 Hz = 18% off / 2.7 cm / 33 ms, 2.5 Hz = 34% / 4.3 / 100,
+        // 1.5 Hz = 53% / 6.6 / 233, 1 Hz = 66% / 8.8 / 422. Feel is subjective — tune in a headset.
+        // _v2 on the Hz: the key had already been persisted at the old 2.5 default, and a default only ever
+        // reaches an install through a NEW key — edited in place it would have been a silent no-op on every
+        // machine that had already run once. The bool keeps its key; its default (true) has not moved.
+        public static BasisSettingsBinding<bool> FBIKElbowDrag = new("fbikelbowdrag", new BasisPlatformDefault<bool>(true));
+        public static BasisSettingsBinding<float> FBIKElbowDragHz = new("fbikelbowdraghz_v2", new BasisPlatformDefault<float>(1.25f));
         // Collision capsule dimensions in meters at default (1.6m) avatar height; runtime
         // multiplies by AvatarToDefaultRatioScaledWithAvatarScale. Keys bumped to _v2 so existing
         // installs pick up the corrected defaults — the previous slider values disagreed with the
         // hardcoded constants in SetHandCollisionScale and were never actually consumed.
-        public static BasisSettingsBinding<float> FBIKChestRadius = new("fbikchestradius_v2", new BasisPlatformDefault<float>(0.07f));
-        public static BasisSettingsBinding<float> FBIKCollisionSkin = new("fbikcollisionskin_v2", new BasisPlatformDefault<float>(0.05f));
+        //
+        // _v3: the torso was too fat. Chest radius 0.07 -> 0.055 and skin 0.05 -> 0.025 takes the chest's
+        // effective lateral half-width (radius + skin + the upper arm's own 0.048) from 0.168 m to 0.128 m
+        // — a 33 cm wide no-arm zone down to 25 cm — and the hips from 0.196 to 0.150. The skin took the
+        // larger cut because at 0.05 it was 42% of the chest radius, i.e. most of the bulk was padding.
+        // Bumped rather than edited in place: a default only reaches an existing install through a new
+        // key, so editing the value alone would have changed nothing for anyone who had already run it.
+        public static BasisSettingsBinding<float> FBIKChestRadius = new("fbikchestradius_v3", new BasisPlatformDefault<float>(0.055f));
+        public static BasisSettingsBinding<float> FBIKCollisionSkin = new("fbikcollisionskin_v3", new BasisPlatformDefault<float>(0.025f));
         public static BasisSettingsBinding<float> FBIKHandRadius = new("fbikhandradius_v2", new BasisPlatformDefault<float>(0.01f));
         public static BasisSettingsBinding<float> FBIKHandSkin = new("fbikhandskin_v2", new BasisPlatformDefault<float>(0.03f));
         public static BasisSettingsBinding<bool> FBIKShoulderSolveEnabled = new("fbikshouldersolveenabled", new BasisPlatformDefault<bool>(true));
+        public static BasisSettingsBinding<bool> FBIKShoulderShrug = new("fbikshouldershrug", new BasisPlatformDefault<bool>(true));
         public static BasisSettingsBinding<float> FBIKShoulderElevation = new("fbikshoulderelevation", new BasisPlatformDefault<float>(0.4f));
         public static BasisSettingsBinding<float> FBIKShoulderProtraction = new("fbikshoulderprotraction", new BasisPlatformDefault<float>(0.3f));
         public static BasisSettingsBinding<float> FBIKMaxBendDeg = new("fbikmaxbenddeg", new BasisPlatformDefault<float>(90f));
-        public static BasisSettingsBinding<float> FBIKStruggleStart = new("fbikstrugglestart", new BasisPlatformDefault<float>(0.9f));
-        public static BasisSettingsBinding<float> FBIKStruggleEnd = new("fbikstruggleend", new BasisPlatformDefault<float>(1f));
         public static BasisSettingsBinding<float> FBIKMaxChestDelta = new("fbikmaxchestdelta", new BasisPlatformDefault<float>(90f));
-        public static BasisSettingsBinding<float> FBIKMaxHipDelta = new("fbikmaxhipdelta", new BasisPlatformDefault<float>(90f));
         // Butterfly knees: with foot trackers (no knee tracker), tilting the feet outward and pulling them in lets
         // the knees fall open -- both laying on your back and sitting upright (cross-legged). MaxOpenDeg clamps the
         // splay to the hip's natural abduction.
         public static BasisSettingsBinding<bool> FBIKButterflyKnees = new("fbikbutterflyknees", new BasisPlatformDefault<bool>(true));
         public static BasisSettingsBinding<float> FBIKButterflyKneeMaxOpenDeg = new("fbikbutterflykneemaxopendeg", new BasisPlatformDefault<float>(60f));
+        // Knee-forward follow: with foot trackers (no knee tracker), aim the knee along the tracked foot's toe
+        // instead of straight body-forward. Coupling is the upright follow fraction; foot-dominant by default (a
+        // deliberate foot yaw is a hip rotation that carries the knee), and it fades to zero as the leg reclines and
+        // the foot's toe lines up with the leg, handing off to the butterfly splay.
+        public static BasisSettingsBinding<bool> FBIKKneeFollowsFoot = new("fbikkneefollowsfoot", new BasisPlatformDefault<bool>(true));
+        public static BasisSettingsBinding<float> FBIKKneeFootFollowUpright = new("fbikkneefootfollowupright", new BasisPlatformDefault<float>(0.75f));
+        // Neural pole (elbow/knee): drive the no-tracker elbow and knee from small fitted MLPs instead of the
+        // polynomial/field. DEFAULT OFF -- on CMU mocap it measures a wash-to-marginal vs the tuned polys; this is
+        // an in-headset A/B toggle, since the feel/naturalness is the real test the mocap metric cannot see.
+        public static BasisSettingsBinding<bool> FBIKNeuralPole = new("fbikneuralpole", new BasisPlatformDefault<bool>(false));
 
         // Spine relax: per-axis bend distribution onto lumbar (spine) and thoracic (upperChest)
         public static BasisSettingsBinding<float> FBIKSpineBendPitch = new("fbikspinebendpitch", new BasisPlatformDefault<float>(0.45f));
@@ -1197,29 +1316,32 @@ namespace Basis.BasisUI
         public static BasisSettingsBinding<float> FBIKUpperChestBendYaw = new("fbikupperchestbendyaw", new BasisPlatformDefault<float>(0.30f));
         public static BasisSettingsBinding<float> FBIKUpperChestBendRoll = new("fbikupperchestbendroll", new BasisPlatformDefault<float>(0.20f));
         // Spine relax: hip hinge coupling
-        public static BasisSettingsBinding<float> FBIKHipHingeStartDeg = new("fbikhiphingestartdeg", new BasisPlatformDefault<float>(30f));
-        public static BasisSettingsBinding<float> FBIKHipHingeMaxAddDeg = new("fbikhiphingemaxadddeg", new BasisPlatformDefault<float>(15f));
+        public static BasisSettingsBinding<float> FBIKHipHingeStartDeg = new("fbikhiphingestartdeg_v2", new BasisPlatformDefault<float>(40f));
+        public static BasisSettingsBinding<float> FBIKHipHingeMaxAddDeg = new("fbikhiphingemaxadddeg_v2", new BasisPlatformDefault<float>(52f));
         // Spine relax: chest follow spring (velocity lag)
         public static BasisSettingsBinding<float> FBIKChestSpringHz = new("fbikchestspringhz", new BasisPlatformDefault<float>(12f));
         public static BasisSettingsBinding<float> FBIKChestSpringDamping = new("fbikchestspringdamping", new BasisPlatformDefault<float>(1f));
         // Hip relax: hip-frame follow spring -- decouples the no-elbow-tracker derived elbow pole from hip
         // jitter/sway (lower Hz = more decoupling; 0 = off). No effect for users WITH elbow trackers.
-        public static BasisSettingsBinding<float> FBIKHipFrameSpringHz = new("fbikhipframespringhz", new BasisPlatformDefault<float>(8f));
-        public static BasisSettingsBinding<float> FBIKHipFrameSpringDamping = new("fbikhipframespringdamping", new BasisPlatformDefault<float>(1f));
         // Arm: chicken-wing elbow flare (no elbow tracker) -- turning the controllers inward pushes the derived
         // elbow OUT to the half-T-pose mark and caps it there. MaxDeg = the cap; InwardGain is signed (negative
         // flips the roll direction, 0 = off); FullRollDeg = the controller roll that is a full chicken-wing.
-        public static BasisSettingsBinding<float> FBIKElbowFlareMaxDeg = new("fbikelbowflaremaxdeg", new BasisPlatformDefault<float>(45f));
-        public static BasisSettingsBinding<float> FBIKElbowFlareInwardGain = new("fbikelbowflareinwardgain", new BasisPlatformDefault<float>(1f));
-        public static BasisSettingsBinding<float> FBIKElbowFlareFullRollDeg = new("fbikelbowflarefullrolldeg", new BasisPlatformDefault<float>(70f));
         // Spine relax: asymmetric flexion clamps (apply to spine + upperChest contributions)
         public static BasisSettingsBinding<float> FBIKSpineMaxForwardDeg = new("fbikspinemaxforwarddeg", new BasisPlatformDefault<float>(60f));
         public static BasisSettingsBinding<float> FBIKSpineMaxBackwardDeg = new("fbikspinemaxbackwarddeg", new BasisPlatformDefault<float>(25f));
         public static BasisSettingsBinding<float> FBIKSpineMaxLateralDeg = new("fbikspinemaxlateraldeg", new BasisPlatformDefault<float>(25f));
         // Spine relax: squish-driven bend coupling
         public static BasisSettingsBinding<float> FBIKSpineSquishBoost = new("fbikspinesquishboost", new BasisPlatformDefault<float>(0.5f));
+        // Chest gaze-follow (no chest tracker): a little forward chest fold when you look down. 0=rigid.
+        public static BasisSettingsBinding<float> FBIKSpineGazeFollow = new("fbikspinegazefollow", new BasisPlatformDefault<float>(0.25f));
+        // Extra forward neck curve on a look-down (no chest tracker). 0 = lordosis only.
+        public static BasisSettingsBinding<float> FBIKNeckGazeFollow = new("fbikneckgazefollow", new BasisPlatformDefault<float>(0.3f));
         // Spine relax: crouch counterweight (hips shift back as the head drops)
         public static BasisSettingsBinding<float> FBIKMoveBodyBackWhenCrouching = new("fbikmovebodybackwhencrouching", new BasisPlatformDefault<float>(1f));
+        // Postural counterbalance: how far the pelvis travels BACK as the trunk folds forward, as a fraction
+        // of how far the neck has travelled forward. ~0.38 falls out of segment masses (keep the COM over the
+        // feet); 0 pins the pelvis, which is what made a look-down drive the chest down into the body.
+        public static BasisSettingsBinding<float> FBIKTrunkCounterbalance = new("fbiktrunkcounterbalance", new BasisPlatformDefault<float>(0.38f));
         // Swing continuity: max elbow/knee swing speed (deg/s); lower = smoother, 0 = off
         public static BasisSettingsBinding<float> FBIKSwingSmoothRate = new("fbikswingsmoothrate", new BasisPlatformDefault<float>(720f));
         // On/off for the swing continuity above (off forces the rate to 0). Lets the elbow swing free.
@@ -1247,8 +1369,28 @@ namespace Basis.BasisUI
         public static BasisSettingsBinding<bool> FBIKAnatShoulderSlide = new("fbikanatshoulderslide_v2", new BasisPlatformDefault<bool>(true));
         public static BasisSettingsBinding<bool> FBIKAnatCervicalLordosis = new("fbikanatcervicallordosis_v2", new BasisPlatformDefault<bool>(true));
         public static BasisSettingsBinding<bool> FBIKAnatPelvicTwistRouting = new("fbikanatpelvictwistrouting_v2", new BasisPlatformDefault<bool>(true));
+        // The anatomical range-of-motion envelope on every solved vertebra (BasisSpineAnatomy). ON by
+        // default: the lumbar spine, the upper chest and the neck previously had NO per-joint limit at all
+        // once the spine CCD ran, and nothing anywhere limited axial rotation. That is not a safe fallback
+        // to keep, it is a measured defect.
+        // Key bumped to _v3: the _v2 rename shipped this false alongside the deliberate FBIKChestIKTarget
+        // disable, so every install that ran that build has false pinned on disk and a value-only change
+        // would not reach them.
+        public static BasisSettingsBinding<bool> FBIKSpineAnatomicalRom = new("fbikspineanatomicalrom_v3", new BasisPlatformDefault<bool>(true));
+        // The chest becomes a real (secondary) IK target instead of a free FK consequence of the head
+        // solve. Placed by the lower spine, with the head restored by the upper joints so it is never
+        // traded away. ON by default; the clear win is chest-tracker users, marginal-but-harmless without.
+        public static BasisSettingsBinding<bool> FBIKChestIKTarget = new("fbikchestiktarget_v2", new BasisPlatformDefault<bool>(false));
         public static BasisSettingsBinding<bool> FBIKLegSwivelSmoothing = new("fbiklegswivelsmoothing", new BasisPlatformDefault<bool>(true));
         public static BasisSettingsBinding<bool> FBIKTrackerBendNormal = new("fbiktrackerbendnormal", new BasisPlatformDefault<bool>(true));
+        // Spine proportion match: with a head+hips tracker, uniformly scales the avatar's spine a little so
+        // its torso length matches the wearer's, captured at calibration. Stops a mismatched avatar spine
+        // from crumpling (too long) or over-stretching (too short). MaxScale is the cap on that scaling.
+        public static BasisSettingsBinding<bool> FBIKSpineProportionMatch = new("fbikspineproportionmatch", new BasisPlatformDefault<bool>(true));
+        public static BasisSettingsBinding<float> FBIKSpineProportionMaxScale = new("fbikspineproportionmaxscale", new BasisPlatformDefault<float>(0.12f));
+
+        public static BasisSettingsBinding<bool> FBIKBodyFit = new("fbikbodyfit", new BasisPlatformDefault<bool>(true));
+        public static BasisSettingsBinding<float> FBIKBodyFitMaxDeviation = new("fbikbodyfitmaxdeviation", new BasisPlatformDefault<float>(Basis.IK.BasisBodyFitCore.DefaultMaxDeviation));
 
         // Cervical lordosis pitch coupling: when AnatCervicalLordosis is on, the base 5° forward
         // bend gets extra angle proportional to head pitch-down. 0 = constant 5°; positive = more
@@ -1278,6 +1420,15 @@ namespace Basis.BasisUI
         public static BasisSettingsBinding<bool> FBIKArmHeightRatioEnabled = new("fbikarmheightratioenabled", new BasisPlatformDefault<bool>(false));
         public static BasisSettingsBinding<float> FBIKArmHeightRatio = new("fbikarmheightratio", new BasisPlatformDefault<float>(1.05f));
 
+        // Desktop only. The head pitches about the base of the neck, so looking down carries the eye FORWARD --
+        // the swing an HMD makes for free, which desktop used to pin away. Strength 1 = the avatar's own
+        // neck->eye geometry; lower it if the camera travel feels like too much.
+        public static BasisSettingsBinding<bool> DesktopHeadSwingEnabled = new("desktopheadswingenabled", new BasisPlatformDefault<bool>(true));
+        public static BasisSettingsBinding<float> DesktopHeadSwingStrength = new("desktopheadswingstrength", new BasisPlatformDefault<float>(1f));
+        // Looking up is not the mirror of looking down: the thoracic spine takes most of it, so the skull does
+        // not slide back over the shoulders anything like as far as the raw neck geometry claims.
+        public static BasisSettingsBinding<float> DesktopHeadSwingBackward = new("desktopheadswingbackward", new BasisPlatformDefault<float>(0.35f));
+
         // ---------------- VIRTUAL SPINE (no torso tracker) ----------------
         // Per-axis cascade fractions of head-relative pitch/roll that the synthesized chest and
         // spine carry when no chest tracker is present. Yaw fractions are derived from bone-length
@@ -1297,11 +1448,13 @@ namespace Basis.BasisUI
         public static BasisSettingsBinding<float> VSpineHipsRotationSpeed = new("vspinehipsrotationspeed", new BasisPlatformDefault<float>(20f));
 
         // Hips forward bias: small forward offset (meters at default avatar scale) so hips don't
-        // sit perfectly under the neck — gives a subtle pelvic tilt that reads as more natural
-        // standing posture. (The former VSpineHipsXZFollowBlend setting was removed in favor of a
-        // hard-coded counterbalance/pendulum model in the virtual spine driver — see
-        // BasisLocalVirtualSpineDriver.ComputeRealisticHipsXZ.)
-        public static BasisSettingsBinding<float> VSpineHipsForwardBias = new("vspinehipsforwardbias", new BasisPlatformDefault<float>(0.02f));
+        // sit perfectly under the neck. Now 0 — it is the only unconditional forward translation of
+        // the pelvis, and with no hips tracker (desktop, headset-only VR) it stacked on an already
+        // head-anchored pelvis and read as "body too far forward". Key bumped to _v2 so installs
+        // that persisted 0.02 pick the new default up. (The former VSpineHipsXZFollowBlend setting
+        // was removed in favor of a hard-coded counterbalance/pendulum model in the virtual spine
+        // driver — see BasisLocalVirtualSpineDriver.ComputeRealisticHipsXZ.)
+        public static BasisSettingsBinding<float> VSpineHipsForwardBias = new("vspinehipsforwardbias_v2", new BasisPlatformDefault<float>(0f));
 
         // Spine compression: the synthesized hips Y is neck - rigid spine length, so lowering the head
         // (leaning to touch toes, sitting) drags the pelvis straight down the full rest length and the
@@ -1310,6 +1463,25 @@ namespace Basis.BasisUI
         // chest scrunches and the pelvis stays up. Strength 0 = rigid (legacy), 1 = full saturation.
         public static BasisSettingsBinding<float> VSpineHipsCompressionStrength = new("vspinehipscompressionstrength", new BasisPlatformDefault<float>(0.85f));
         public static BasisSettingsBinding<float> VSpineHipsMaxDropMeters = new("vspinehipsmaxdropmeters", new BasisPlatformDefault<float>(0.3f));
+
+        // ⭐ THE PELVIS POSTURE MODEL -- replaces the two knobs above with a law fitted to real humans.
+        //
+        // The saturation above cannot be right, because it answers a question with one number that has two
+        // answers. A low head is either a WAIST-BEND (spine folds, pelvis stays high) or a SQUAT (spine
+        // stays stacked, pelvis rides the head down), and measured on 44 CMU clips the real pelvis coupling
+        // is 0.02-0.14 for the first and 0.78-0.99 for the second. One constant serves neither: on a squat
+        // the saturation holds the pelvis 32.8 cm ABOVE where a real one goes, and since the head is welded
+        // to the HMD, the spine and neck have to find those centimetres by rotating -- the "gamer neck /
+        // tortoise" users report when they bend over.
+        //
+        // BasisPelvisPostureModel tells the two apart using the head's FORWARD LEAN, the input the old law
+        // never had. Pelvis-height error against a real human: 8.3 cm -> 4.5 cm (5.2 cm leave-one-clip-out).
+        //
+        // A TOGGLE, not a slider: these are two different laws, not two ends of one, so there is nothing
+        // meaningful in between. ON by default because the old law is a measured 32.8 cm error rather than a
+        // safe fallback -- but it is one switch to A/B in a headset, and one switch to revert.
+        // The two knobs above are consulted ONLY when this is off.
+        public static BasisSettingsBinding<bool> VSpinePostureModel = new("vspineposturemodel", new BasisPlatformDefault<bool>(true));
 
         // Torso yaw "play": degrees the head can turn before the synthesized chest/spine/hips begin
         // following. The torso holds inside this cone, catches up once the head leaves it, then the
@@ -1338,6 +1510,11 @@ namespace Basis.BasisUI
         // ("vive_tracker_waist", ...). Off by default: most people never set those roles (or
         // leave stale ones), and a wrong announced role is forced with no geometric check.
         public static BasisSettingsBinding<bool> TrustSteamVRRoles = new("trackerlinking_truststeamvrroles", new BasisPlatformDefault<bool>(false));
+        // Standing-idle continuous FBT refresh (BasisContinuousCalibration): slowly absorbs
+        // small strap slips into the calibration snapshots while the player stands in their
+        // calibration pose. Off by default — it rewrites calibration data at runtime, so
+        // users opt in explicitly.
+        public static BasisSettingsBinding<bool> ContinuousCalibration = new("trackerlinking_continuouscalibration", new BasisPlatformDefault<bool>(false));
         // Confidence falloff for a tracker that's spiking relative to its own
         // recent baseline. weight = 1 / (1 + max(surprise - 1, 0)^2 * penalty).
         // Higher = more aggressive shift to the steadier half on a glitch.
@@ -1539,16 +1716,15 @@ namespace Basis.BasisUI
             SelectedBone.LoadBindingValue();
             IKMode.LoadBindingValue();
             IKLockMode.LoadBindingValue();
-            PitchCalibration.LoadBindingValue();
-            CalibrationStandingEyeHeightMeters.LoadBindingValue();
-            EnableStandingEyeHeightCorrection.LoadBindingValue();
-            EnableStandingHeightNudge.LoadBindingValue();
-            AdditionalPlayerHeight.LoadBindingValue();
+            CalibrationMirror.LoadBindingValue();
+            EnableArmToHeightBlend.LoadBindingValue();
+            ArmToHeightBlend.LoadBindingValue();
             SavedPlayerEyeHeight.LoadBindingValue();
             SavedPlayerArmSpan.LoadBindingValue();
             AutoScaleEstimateEnabled.LoadBindingValue();
             SitStand.LoadBindingValue();
             EnableFBT.LoadBindingValue();
+            TrackerVisuals.LoadBindingValue();
             EnableOSC.LoadBindingValue();
             EnableFaceTracking.LoadBindingValue();
             EnableEyeTracking.LoadBindingValue();
@@ -1624,6 +1800,12 @@ namespace Basis.BasisUI
             EnableMaterialCorrection.LoadBindingValue();
             ContentPoliceControl.MaterialCorrectionEnabled = EnableMaterialCorrection.RawValue;
             EnableMaterialCorrection.OnChanged += value => ContentPoliceControl.MaterialCorrectionEnabled = value;
+            EnableShaderBlocklist.LoadBindingValue();
+            ContentPoliceControl.ShaderBlocklistEnabled = EnableShaderBlocklist.RawValue;
+            EnableShaderBlocklist.OnChanged += value => ContentPoliceControl.ShaderBlocklistEnabled = value;
+            ShaderBlocklistPatterns.LoadBindingValue();
+            BasisShaderFallback.SetBlocklist(ShaderBlocklistPatterns.RawValue);
+            ShaderBlocklistPatterns.OnChanged += BasisShaderFallback.SetBlocklist;
             EnableGraphicsStatePrewarm.LoadBindingValue();
             BasisGraphicsStatePrewarm.Enabled = EnableGraphicsStatePrewarm.RawValue;
             EnableGraphicsStatePrewarm.OnChanged += value => BasisGraphicsStatePrewarm.Enabled = value;
@@ -1714,9 +1896,6 @@ namespace Basis.BasisUI
 
             // Networking
             AutoConnect.LoadBindingValue();
-            NetEuroMinCutoff.LoadBindingValue();
-            NetEuroBeta.LoadBindingValue();
-            NetEuroDerivativeCutoff.LoadBindingValue();
             NetworkJitterBufferOverride.LoadBindingValue();
             NetworkJitterBufferDepth.LoadBindingValue();
 
@@ -1788,6 +1967,18 @@ namespace Basis.BasisUI
             FBIKDerivativeCutoff.LoadBindingValue();
             FBIKPositionSmoothingHz.LoadBindingValue();
             FBIKRotationSmoothingHz.LoadBindingValue();
+
+            for (int Index = 0; Index < FBIKSmoothingGroups.Length; Index++)
+            {
+                SmoothingGroupBindings group = FBIKSmoothingGroups[Index];
+                group.Preset.LoadBindingValue();
+                group.Custom.LoadBindingValue();
+                group.MinCutoff.LoadBindingValue();
+                group.Beta.LoadBindingValue();
+                group.Strength.LoadBindingValue();
+                group.PositionHz.LoadBindingValue();
+                group.RotationHz.LoadBindingValue();
+            }
             FBIKSmoothingStrength.LoadBindingValue();
 
             // Hips
@@ -1920,21 +2111,29 @@ namespace Basis.BasisUI
             FBIKCollisionsEnabled.LoadBindingValue();
             FBIKProtectElbow.LoadBindingValue();
             FBIKCollideTrackedElbow.LoadBindingValue();
-            FBIKUseHandCapsule.LoadBindingValue();
+            FBIKElbowDrag.LoadBindingValue();
+            FBIKElbowDragHz.LoadBindingValue();
             FBIKChestRadius.LoadBindingValue();
             FBIKCollisionSkin.LoadBindingValue();
             FBIKHandRadius.LoadBindingValue();
             FBIKHandSkin.LoadBindingValue();
             FBIKShoulderSolveEnabled.LoadBindingValue();
+            FBIKShoulderShrug.LoadBindingValue();
             FBIKShoulderElevation.LoadBindingValue();
             FBIKShoulderProtraction.LoadBindingValue();
             FBIKMaxBendDeg.LoadBindingValue();
-            FBIKStruggleStart.LoadBindingValue();
-            FBIKStruggleEnd.LoadBindingValue();
             FBIKMaxChestDelta.LoadBindingValue();
-            FBIKMaxHipDelta.LoadBindingValue();
             FBIKButterflyKnees.LoadBindingValue();
             FBIKButterflyKneeMaxOpenDeg.LoadBindingValue();
+            FBIKKneeFollowsFoot.LoadBindingValue();
+            FBIKKneeFootFollowUpright.LoadBindingValue();
+            FBIKNeuralPole.LoadBindingValue();
+            FBIKSpineAnatomicalRom.LoadBindingValue();
+            FBIKChestIKTarget.LoadBindingValue();
+            FBIKSpineProportionMatch.LoadBindingValue();
+            FBIKSpineProportionMaxScale.LoadBindingValue();
+            FBIKBodyFit.LoadBindingValue();
+            FBIKBodyFitMaxDeviation.LoadBindingValue();
             FBIKSpineBendPitch.LoadBindingValue();
             FBIKSpineBendYaw.LoadBindingValue();
             FBIKSpineBendRoll.LoadBindingValue();
@@ -1945,16 +2144,14 @@ namespace Basis.BasisUI
             FBIKHipHingeMaxAddDeg.LoadBindingValue();
             FBIKChestSpringHz.LoadBindingValue();
             FBIKChestSpringDamping.LoadBindingValue();
-            FBIKHipFrameSpringHz.LoadBindingValue();
-            FBIKHipFrameSpringDamping.LoadBindingValue();
-            FBIKElbowFlareMaxDeg.LoadBindingValue();
-            FBIKElbowFlareInwardGain.LoadBindingValue();
-            FBIKElbowFlareFullRollDeg.LoadBindingValue();
             FBIKSpineMaxForwardDeg.LoadBindingValue();
             FBIKSpineMaxBackwardDeg.LoadBindingValue();
             FBIKSpineMaxLateralDeg.LoadBindingValue();
             FBIKSpineSquishBoost.LoadBindingValue();
+            FBIKSpineGazeFollow.LoadBindingValue();
+            FBIKNeckGazeFollow.LoadBindingValue();
             FBIKMoveBodyBackWhenCrouching.LoadBindingValue();
+            FBIKTrunkCounterbalance.LoadBindingValue();
             FBIKSwingSmoothRate.LoadBindingValue();
             FBIKElbowSwingEnabled.LoadBindingValue();
             FBIKSpineCCDRelax.LoadBindingValue();
@@ -1967,6 +2164,9 @@ namespace Basis.BasisUI
             FBIKUpperArmTwistFraction.LoadBindingValue();
             FBIKArmHeightRatioEnabled.LoadBindingValue();
             FBIKArmHeightRatio.LoadBindingValue();
+            DesktopHeadSwingEnabled.LoadBindingValue();
+            DesktopHeadSwingStrength.LoadBindingValue();
+            DesktopHeadSwingBackward.LoadBindingValue();
             FBIKAnatDifferentialStiffness.LoadBindingValue();
             FBIKAnatShoulderSlide.LoadBindingValue();
             FBIKAnatCervicalLordosis.LoadBindingValue();
@@ -1998,6 +2198,7 @@ namespace Basis.BasisUI
             VSpineHipsForwardBias.LoadBindingValue();
             VSpineHipsCompressionStrength.LoadBindingValue();
             VSpineHipsMaxDropMeters.LoadBindingValue();
+            VSpinePostureModel.LoadBindingValue();
             VSpineTorsoYawDeadzoneDeg.LoadBindingValue();
             VSpineTorsoYawBlendSpeed.LoadBindingValue();
             VSpineTorsoYawPlayInVR.LoadBindingValue();
@@ -2006,6 +2207,7 @@ namespace Basis.BasisUI
             TrackerLinkingAdvancedVisible.LoadBindingValue();
             TrackerLinkingConnectorVisible.LoadBindingValue();
             TrustSteamVRRoles.LoadBindingValue();
+            ContinuousCalibration.LoadBindingValue();
             PairingSurprisePenalty.LoadBindingValue();
             PairingSurpriseClamp.LoadBindingValue();
             PairingEmaFloor.LoadBindingValue();
